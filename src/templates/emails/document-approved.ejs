@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document <%= typeof status !== 'undefined' ? (status === 'approved' ? 'Approved' : 'Rejected') : 'Verified' %></title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      margin: 0;
+      padding: 0;
+    }
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .header {
+      background-color: #2c3e50;
+      color: white;
+      padding: 20px;
+      text-align: center;
+    }
+    .content {
+      padding: 20px;
+      background-color: #f9f9f9;
+    }
+    .footer {
+      text-align: center;
+      padding: 20px;
+      font-size: 12px;
+      color: #666;
+    }
+    .button {
+      display: inline-block;
+      padding: 10px 20px;
+      background-color: #3498db;
+      color: white;
+      text-decoration: none;
+      border-radius: 4px;
+      margin-top: 20px;
+    }
+    .details {
+      background-color: #fff;
+      border: 1px solid #ddd;
+      padding: 15px;
+      margin-top: 20px;
+      border-radius: 4px;
+    }
+    .success {
+      color: #27ae60;
+      font-weight: bold;
+    }
+    .error {
+      color: #e74c3c;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Document <%= typeof status !== 'undefined' ? (status === 'approved' ? 'Approved' : 'Rejected') : 'Verified' %></h1>
+    </div>
+    <div class="content">
+      <p>Hello <%= name %>,</p>
+      
+      <% if (typeof status !== 'undefined' && status === 'approved') { %>
+        <p class="success">Your document (<strong><%= documentType.replace(/_/g, ' ').toUpperCase() %></strong>) has been approved.</p>
+      <% } else if (typeof status !== 'undefined' && status === 'rejected') { %>
+        <p class="error">Your document (<strong><%= documentType.replace(/_/g, ' ').toUpperCase() %></strong>) has been rejected.</p>
+      <% } else { %>
+        <p>Your document has been verified.</p>
+      <% } %>
+      
+      <div class="details">
+        <h3>Document Details:</h3>
+        <p><strong>Document Type:</strong> <%= documentType.replace(/_/g, ' ').toUpperCase() %></p>
+        
+        <% if (typeof remarks !== 'undefined' && remarks) { %>
+          <p><strong>Remarks:</strong> <%= remarks %></p>
+        <% } %>
+        
+        <% if (typeof status !== 'undefined' && status === 'approved' && typeof employeeId !== 'undefined' && employeeId && employeeId !== 'Pending') { %>
+          <p><strong>Employee ID:</strong> <%= employeeId %></p>
+        <% } %>
+      </div>
+      
+      <% if (typeof status !== 'undefined' && status === 'rejected') { %>
+        <p>Please upload a new document or contact support for assistance.</p>
+        <a href="#" class="button">Upload New Document</a>
+      <% } else { %>
+        <a href="#" class="button">Go to Dashboard</a>
+      <% } %>
+    </div>
+    <div class="footer">
+      <p>This is an automated email. Please do not reply to this message.</p>
+      <p>&copy; 2025 Your Service Provider. All rights reserved.</p>
+    </div>
+  </div>
+</body>
+</html>

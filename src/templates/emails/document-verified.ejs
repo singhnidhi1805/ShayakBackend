@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        .container { padding: 20px; }
+        .success { color: #4CAF50; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Document Verification Status</h2>
+        <p>Dear <%= name %>,</p>
+        <p class="success">Your <%= documentType %> has been successfully verified!</p>
+        <% if (remarks) { %>
+            <p>Additional remarks: <%= remarks %></p>
+        <% } %>
+    </div>
+</body>
+</html>

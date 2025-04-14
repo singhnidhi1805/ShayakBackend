@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        .container { padding: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Document Upload Confirmation</h2>
+        <p>Dear <%= name %>,</p>
+        <p>Your <%= documentType %> has been successfully uploaded to our platform.</p>
+        <p>Our team will review the document and update you on the verification status.</p>
+        <p>Document Details:</p>
+        <ul>
+            <li>Type: <%= documentType %></li>
+            <li>Upload Date: <%= new Date().toLocaleDateString() %></li>
+        </ul>
+    </div>
+</body>
+</html>

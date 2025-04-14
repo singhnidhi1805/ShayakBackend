@@ -1,0 +1,118 @@
+{
+    "professionals": [
+      {
+        "_id": "60d21b4667d0d8992e610c31",
+        "name": "John Doe",
+        "email": "john.doe@example.com",
+        "phone": "+919876543210",
+        "userId": "PRO2405001",
+        "status": "document_pending",
+        "onboardingStep": "documents",
+        "specializations": ["plumbing", "electrical"],
+        "isAvailable": false,
+        "currentLocation": {
+          "type": "Point",
+          "coordinates": [77.2090, 28.6139]
+        },
+        "documentsStatus": {
+          "id_proof": "pending",
+          "address_proof": "pending",
+          "professional_certificate": "not_submitted"
+        },
+        "documents": [
+          {
+            "_id": "60d21b5c67d0d8992e610c33",
+            "type": "id_proof",
+            "fileUrl": "https://shayakpartnerdocument.s3.ap-south-1.amazonaws.com/documents/60d21b4667d0d8992e610c31/id_proof_1624352604021",
+            "fileName": "aadhar_card.pdf",
+            "mimeType": "application/pdf",
+            "fileSize": 423891,
+            "uploadedAt": "2025-03-01T14:30:04.021Z",
+            "status": "pending"
+          },
+          {
+            "_id": "60d21b6467d0d8992e610c34",
+            "type": "address_proof",
+            "fileUrl": "https://shayakpartnerdocument.s3.ap-south-1.amazonaws.com/documents/60d21b4667d0d8992e610c31/address_proof_1624352612347",
+            "fileName": "electricity_bill.jpg",
+            "mimeType": "image/jpeg",
+            "fileSize": 245678,
+            "uploadedAt": "2025-03-01T14:30:12.347Z",
+            "status": "pending"
+          }
+        ],
+        "createdAt": "2025-03-01T14:30:00.000Z",
+        "updatedAt": "2025-03-01T14:30:12.347Z"
+      },
+      {
+        "_id": "60d21c2167d0d8992e610c35",
+        "name": "Jane Smith",
+        "email": "jane.smith@example.com",
+        "phone": "+918765432109",
+        "userId": "PRO2405002",
+        "status": "under_review",
+        "onboardingStep": "documents",
+        "specializations": ["carpentry", "painting"],
+        "isAvailable": false,
+        "currentLocation": {
+          "type": "Point",
+          "coordinates": [72.8777, 19.0760]
+        },
+        "documentsStatus": {
+          "id_proof": "approved",
+          "address_proof": "pending",
+          "professional_certificate": "pending"
+        },
+        "documents": [
+          {
+            "_id": "60d21c3467d0d8992e610c36",
+            "type": "id_proof",
+            "fileUrl": "https://shayakpartnerdocument.s3.ap-south-1.amazonaws.com/documents/60d21c2167d0d8992e610c35/id_proof_1624352756123",
+            "fileName": "pan_card.pdf",
+            "mimeType": "application/pdf",
+            "fileSize": 198742,
+            "uploadedAt": "2025-03-02T10:45:56.123Z",
+            "status": "approved",
+            "verifiedBy": "60d21b1567d0d8992e610c30",
+            "verifiedAt": "2025-03-02T12:30:45.000Z",
+            "remarks": "Document verified successfully"
+          },
+          {
+            "_id": "60d21c3f67d0d8992e610c37",
+            "type": "address_proof",
+            "fileUrl": "https://shayakpartnerdocument.s3.ap-south-1.amazonaws.com/documents/60d21c2167d0d8992e610c35/address_proof_1624352767891",
+            "fileName": "rent_agreement.pdf",
+            "mimeType": "application/pdf",
+            "fileSize": 543210,
+            "uploadedAt": "2025-03-02T10:46:07.891Z",
+            "status": "pending"
+          },
+          {
+            "_id": "60d21c4a67d0d8992e610c38",
+            "type": "professional_certificate",
+            "fileUrl": "https://shayakpartnerdocument.s3.ap-south-1.amazonaws.com/documents/60d21c2167d0d8992e610c35/professional_certificate_1624352778456",
+            "fileName": "carpentry_certificate.jpg",
+            "mimeType": "image/jpeg",
+            "fileSize": 354621,
+            "uploadedAt": "2025-03-02T10:46:18.456Z",
+            "status": "pending"
+          }
+        ],
+        "createdAt": "2025-03-02T10:45:00.000Z",
+        "updatedAt": "2025-03-02T12:30:45.000Z"
+      }
+    ],
+    "users": [
+      {
+        "_id": "60d21b1567d0d8992e610c30",
+        "name": "Admin User",
+        "email": "admin@example.com",
+        "phone": "+919999999999",
+        "role": "admin",
+        "status": "active",
+        "createdAt": "2025-03-01T00:00:00.000Z",
+        "updatedAt": "2025-03-01T00:00:00.000Z"
+      }
+    ]
+  }
+  

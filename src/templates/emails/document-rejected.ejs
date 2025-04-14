@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        .container { padding: 20px; }
+        .error { color: #f44336; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Document Verification Status</h2>
+        <p>Dear <%= name %>,</p>
+        <p class="error">Your <%= documentType %> could not be verified.</p>
+        <% if (remarks) { %>
+            <p>Reason: <%= remarks %></p>
+        <% } %>
+        <p>Please upload a new document addressing the following issues:</p>
+        <ul>
+            <% remarks.split(',').forEach(function(remark){ %>
+                <li><%= remark.trim() %></li>
+            <% }); %>
+        </ul>
+    </div>
+</body>
+</html>

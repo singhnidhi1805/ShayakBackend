@@ -1,0 +1,18 @@
+# Environment files
+firebase-service-account.json
+src/.env
+google-services.json
+
+# Node modules
+node_modules/
+
+# Logs
+*.log
+npm-debug.log*
+
+# System files
+.DS_Store
+Thumbs.db
+
+
+google-services.json
