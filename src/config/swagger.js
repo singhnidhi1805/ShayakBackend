@@ -34,7 +34,7 @@ const swaggerJsDoc = require('swagger-jsdoc');
 const swaggerUi = require('swagger-ui-express');
 
 const swaggerDefinition = {
-  openapi: '3.0.1',
+  openapi: '3.0.0',
   info: {
     title: 'Sahayak API',
     version: '1.0.0',
@@ -42,7 +42,7 @@ const swaggerDefinition = {
   },
   servers: [
     {
-      url: 'https://shayakbackend-production.up.railway.app/',
+      url: 'http://shayakbackend-production.up.railway.app/api',
       description: 'Development server',
     },
   ],
