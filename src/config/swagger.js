@@ -34,7 +34,7 @@ const swaggerJsDoc = require('swagger-jsdoc');
 const swaggerUi = require('swagger-ui-express');
 
 const swaggerDefinition = {
-  openapi: '3.0.0',
+  openapi: '3.0.1',
   info: {
     title: 'Sahayak API',
     version: '1.0.0',
