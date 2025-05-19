@@ -175,7 +175,7 @@ router.post('/user/verify-otp', userAuth.verifyOtp);
 
 /**
  * @swagger
- * /api/auth/professional/send-otp:
+ * /auth/professional/send-otp:
  *   post:
  *     summary: Send OTP to a professional's phone
  *     tags:
@@ -265,7 +265,7 @@ router.post('/user/verify-otp', userAuth.verifyOtp);
 
 /**
  * @swagger
- * /api/auth/professional/verify-otp:
+ * /auth/professional/verify-otp:
  *   post:
  *     summary: Verify OTP and authenticate the professional
  *     tags:
