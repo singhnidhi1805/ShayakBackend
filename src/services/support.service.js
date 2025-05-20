@@ -1,28 +1,17 @@
-// src/services/support.service.js
-const Ticket = require('../models/ticket.model');
-const TicketReply = require('../models/ticketReply.model');
-const FAQ = require('../models/faq.model');
-const FAQCategory = require('../models/faqCategory.model');
-const User = require('../models/user.model');
-const Professional = require('../models/professional.model');
-const Feedback = require('../models/feedback.model');
-const ChatSession = require('../models/chatSession.model');
-const ChatMessage = require('../models/chatMessage.model');
-const NotificationService = require('./notification.service');
-const { uploadToS3 } = require('../utils/fileUpload');
-const logger = require('../config/logger');
+// src/services/supportService.js
+import api from './api';
 
 class SupportService {
   /**
    * Get FAQ categories
-   * @returns {Promise<Array>} FAQ categories
+   * @returns {Promise} Response with FAQ categories
    */
   async getFAQCategories() {
     try {
-      const categories = await FAQCategory.find({ isActive: true }).sort({ order: 1 });
-      return categories;
+      const response = await api.get('/professional/support/faq-categories');
+      return response.data;
     } catch (error) {
-      logger.error('Get FAQ categories error:', error);
+      console.error('Error fetching FAQ categories:', error);
       throw error;
     }
   }
@@ -30,23 +19,14 @@ class SupportService {
   /**
    * Get FAQs by category
    * @param {string} categoryId - Category ID
-   * @returns {Promise<Array>} FAQs
+   * @returns {Promise} Response with FAQs
    */
   async getFAQs(categoryId) {
     try {
-      const query = { isActive: true };
-      
-      if (categoryId) {
-        query.category = categoryId;
-      }
-      
-      const faqs = await FAQ.find(query)
-        .populate('category', 'name')
-        .sort({ order: 1 });
-        
-      return faqs;
+      const response = await api.get(`/professional/support/faqs?categoryId=${categoryId}`);
+      return response.data;
     } catch (error) {
-      logger.error('Get FAQs error:', error);
+      console.error('Error fetching FAQs:', error);
       throw error;
     }
   }
@@ -54,52 +34,28 @@ class SupportService {
   /**
    * Search FAQs
    * @param {string} query - Search query
-   * @returns {Promise<Array>} Search results
+   * @returns {Promise} Response with search results
    */
   async searchFAQs(query) {
     try {
-      if (!query || query.length < 3) {
-        throw new Error('Search query must be at least 3 characters');
-      }
-      
-      const faqs = await FAQ.find({
-        isActive: true,
-        $or: [
-          { question: { $regex: query, $options: 'i' } },
-          { answer: { $regex: query, $options: 'i' } },
-          { tags: { $regex: query, $options: 'i' } }
-        ]
-      }).populate('category', 'name');
-      
-      return faqs;
+      const response = await api.get(`/professional/support/faqs/search?query=${query}`);
+      return response.data;
     } catch (error) {
-      logger.error('Search FAQs error:', error);
+      console.error('Error searching FAQs:', error);
       throw error;
     }
   }
 
   /**
    * Get support tickets
-   * @param {string} userId - User ID
-   * @param {string} role - User role
-   * @returns {Promise<Array>} Support tickets
+   * @returns {Promise} Response with support tickets
    */
-  async getTickets(userId, role) {
+  async getTickets() {
     try {
-      let query = {};
-      
-      // If not admin, only show user's tickets
-      if (role !== 'admin') {
-        query.user = userId;
-      }
-      
-      const tickets = await Ticket.find(query)
-        .populate('user', 'name email')
-        .sort({ createdAt: -1 });
-      
-      return tickets;
+      const response = await api.get('/professional/support/tickets');
+      return response.data;
     } catch (error) {
-      logger.error('Get tickets error:', error);
+      console.error('Error fetching support tickets:', error);
       throw error;
     }
   }
@@ -107,36 +63,14 @@ class SupportService {
   /**
    * Get ticket details
    * @param {string} ticketId - Ticket ID
-   * @param {string} userId - User ID
-   * @param {string} role - User role
-   * @returns {Promise<Object>} Ticket details
+   * @returns {Promise} Response with ticket details
    */
-  async getTicketDetails(ticketId, userId, role) {
+  async getTicketDetails(ticketId) {
     try {
-      const ticket = await Ticket.findById(ticketId)
-        .populate('user', 'name email')
-        .populate('assignedTo', 'name email');
-      
-      if (!ticket) {
-        throw new Error('Ticket not found');
-      }
-      
-      // Check if user has access to this ticket
-      if (role !== 'admin' && ticket.user.toString() !== userId) {
-        throw new Error('Not authorized to access this ticket');
-      }
-      
-      // Get ticket replies
-      const replies = await TicketReply.find({ ticket: ticketId })
-        .populate('user', 'name email role')
-        .sort({ createdAt: 1 });
-      
-      return {
-        ticket,
-        replies
-      };
+      const response = await api.get(`/professional/support/tickets/${ticketId}`);
+      return response.data;
     } catch (error) {
-      logger.error('Get ticket details error:', error);
+      console.error('Error fetching ticket details:', error);
       throw error;
     }
   }
@@ -144,67 +78,14 @@ class SupportService {
   /**
    * Create a support ticket
    * @param {Object} ticketData - Ticket data
-   * @param {string} userId - User ID
-   * @param {string} role - User role
-   * @returns {Promise<Object>} Created ticket
+   * @returns {Promise} Response with created ticket
    */
-  async createTicket(ticketData, userId, role) {
+  async createTicket(ticketData) {
     try {
-      const { subject, message, category, priority = 'medium' } = ticketData;
-      
-      if (!subject || !message) {
-        throw new Error('Subject and message are required');
-      }
-      
-      // Get user info based on role
-      let user;
-      if (role === 'user') {
-        user = await User.findById(userId);
-      } else if (role === 'professional') {
-        const professional = await Professional.findOne({ userId });
-        if (professional) {
-          user = await User.findOne({ email: professional.email });
-        }
-      }
-      
-      if (!user) {
-        throw new Error('User not found');
-      }
-      
-      // Generate ticket number
-      const ticketCount = await Ticket.countDocuments();
-      const ticketNumber = `TIC${new Date().getFullYear()}${(ticketCount + 1).toString().padStart(6, '0')}`;
-      
-      // Create ticket
-      const ticket = new Ticket({
-        ticketNumber,
-        user: userId,
-        subject,
-        message,
-        category,
-        priority,
-        status: 'open',
-        userRole: role
-      });
-      
-      await ticket.save();
-      
-      // Notify admins about new ticket
-      const admins = await User.find({ role: 'admin' });
-      
-      for (const admin of admins) {
-        await NotificationService.createNotification({
-          recipient: admin._id,
-          type: 'new_ticket',
-          title: 'New Support Ticket',
-          message: `New ticket submitted: ${subject}`,
-          data: { ticketId: ticket._id }
-        });
-      }
-      
-      return ticket;
+      const response = await api.post('/professional/support/tickets', ticketData);
+      return response.data;
     } catch (error) {
-      logger.error('Create ticket error:', error);
+      console.error('Error creating support ticket:', error);
       throw error;
     }
   }
@@ -213,82 +94,14 @@ class SupportService {
    * Add reply to a ticket
    * @param {string} ticketId - Ticket ID
    * @param {string} message - Reply message
-   * @param {string} userId - User ID
-   * @param {string} role - User role
-   * @returns {Promise<Object>} Added reply
+   * @returns {Promise} Response with status
    */
-  async replyToTicket(ticketId, message, userId, role) {
+  async replyToTicket(ticketId, message) {
     try {
-      if (!message) {
-        throw new Error('Message is required');
-      }
-      
-      const ticket = await Ticket.findById(ticketId);
-      
-      if (!ticket) {
-        throw new Error('Ticket not found');
-      }
-      
-      // Check if user has access to this ticket
-      if (role !== 'admin' && ticket.user.toString() !== userId) {
-        throw new Error('Not authorized to reply to this ticket');
-      }
-      
-      // Check if ticket is closed
-      if (ticket.status === 'closed') {
-        throw new Error('Cannot reply to a closed ticket');
-      }
-      
-      // Create reply
-      const reply = new TicketReply({
-        ticket: ticketId,
-        user: userId,
-        message,
-        userRole: role
-      });
-      
-      await reply.save();
-      
-      // Update ticket status if it was pending
-      if (ticket.status === 'pending' && role === 'admin') {
-        ticket.status = 'open';
-        await ticket.save();
-      }
-      
-      // If user replied and ticket is open, change status to pending
-      if (role !== 'admin' && ticket.status === 'open') {
-        ticket.status = 'pending';
-        await ticket.save();
-      }
-      
-      // Notify the other party about the reply
-      if (role === 'admin') {
-        // Notify ticket creator
-        await NotificationService.createNotification({
-          recipient: ticket.user,
-          type: 'ticket_reply',
-          title: 'New Reply to Your Ticket',
-          message: 'Support has replied to your ticket',
-          data: { ticketId: ticket._id }
-        });
-      } else {
-        // Notify admins
-        const admins = await User.find({ role: 'admin' });
-        
-        for (const admin of admins) {
-          await NotificationService.createNotification({
-            recipient: admin._id,
-            type: 'ticket_reply',
-            title: 'New User Reply',
-            message: `New reply on ticket ${ticket.ticketNumber}`,
-            data: { ticketId: ticket._id }
-          });
-        }
-      }
-      
-      return reply;
+      const response = await api.post(`/professional/support/tickets/${ticketId}/replies`, { message });
+      return response.data;
     } catch (error) {
-      logger.error('Reply to ticket error:', error);
+      console.error('Error replying to ticket:', error);
       throw error;
     }
   }
@@ -296,61 +109,14 @@ class SupportService {
   /**
    * Close a support ticket
    * @param {string} ticketId - Ticket ID
-   * @param {string} userId - User ID
-   * @param {string} role - User role
-   * @returns {Promise<Object>} Updated ticket
+   * @returns {Promise} Response with status
    */
-  async closeTicket(ticketId, userId, role) {
+  async closeTicket(ticketId) {
     try {
-      const ticket = await Ticket.findById(ticketId);
-      
-      if (!ticket) {
-        throw new Error('Ticket not found');
-      }
-      
-      // Check if user has access to this ticket
-      if (role !== 'admin' && ticket.user.toString() !== userId) {
-        throw new Error('Not authorized to close this ticket');
-      }
-      
-      // Check if ticket is already closed
-      if (ticket.status === 'closed') {
-        throw new Error('Ticket is already closed');
-      }
-      
-      // Update ticket status
-      ticket.status = 'closed';
-      ticket.closedAt = new Date();
-      ticket.closedBy = userId;
-      
-      await ticket.save();
-      
-      // Notify the other party about the closure
-      if (role === 'admin') {
-        // Notify ticket creator
-        await NotificationService.createNotification({
-          recipient: ticket.user,
-          type: 'ticket_closed',
-          title: 'Support Ticket Closed',
-          message: 'Your support ticket has been closed',
-          data: { ticketId: ticket._id }
-        });
-      } else {
-        // Notify admins if assigned
-        if (ticket.assignedTo) {
-          await NotificationService.createNotification({
-            recipient: ticket.assignedTo,
-            type: 'ticket_closed',
-            title: 'Support Ticket Closed',
-            message: `Ticket ${ticket.ticketNumber} has been closed by the user`,
-            data: { ticketId: ticket._id }
-          });
-        }
-      }
-      
-      return ticket;
+      const response = await api.put(`/professional/support/tickets/${ticketId}/close`);
+      return response.data;
     } catch (error) {
-      logger.error('Close ticket error:', error);
+      console.error('Error closing ticket:', error);
       throw error;
     }
   }
@@ -358,63 +124,14 @@ class SupportService {
   /**
    * Reopen a support ticket
    * @param {string} ticketId - Ticket ID
-   * @param {string} userId - User ID
-   * @param {string} role - User role
-   * @returns {Promise<Object>} Updated ticket
+   * @returns {Promise} Response with status
    */
-  async reopenTicket(ticketId, userId, role) {
+  async reopenTicket(ticketId) {
     try {
-      const ticket = await Ticket.findById(ticketId);
-      
-      if (!ticket) {
-        throw new Error('Ticket not found');
-      }
-      
-      // Check if user has access to this ticket
-      if (role !== 'admin' && ticket.user.toString() !== userId) {
-        throw new Error('Not authorized to reopen this ticket');
-      }
-      
-      // Check if ticket is already open
-      if (ticket.status !== 'closed') {
-        throw new Error('Ticket is not closed');
-      }
-      
-      // Update ticket status
-      ticket.status = role === 'admin' ? 'open' : 'pending';
-      ticket.reopenedAt = new Date();
-      ticket.reopenedBy = userId;
-      
-      await ticket.save();
-      
-      // Notify the other party about the reopening
-      if (role === 'admin') {
-        // Notify ticket creator
-        await NotificationService.createNotification({
-          recipient: ticket.user,
-          type: 'ticket_reopened',
-          title: 'Support Ticket Reopened',
-          message: 'Your support ticket has been reopened',
-          data: { ticketId: ticket._id }
-        });
-      } else {
-        // Notify admins
-        const admins = await User.find({ role: 'admin' });
-        
-        for (const admin of admins) {
-          await NotificationService.createNotification({
-            recipient: admin._id,
-            type: 'ticket_reopened',
-            title: 'Support Ticket Reopened',
-            message: `Ticket ${ticket.ticketNumber} has been reopened by the user`,
-            data: { ticketId: ticket._id }
-          });
-        }
-      }
-      
-      return ticket;
+      const response = await api.put(`/professional/support/tickets/${ticketId}/reopen`);
+      return response.data;
     } catch (error) {
-      logger.error('Reopen ticket error:', error);
+      console.error('Error reopening ticket:', error);
       throw error;
     }
   }
@@ -423,71 +140,36 @@ class SupportService {
    * Upload attachment to a ticket
    * @param {string} ticketId - Ticket ID
    * @param {Object} file - File object
-   * @param {string} userId - User ID
-   * @param {string} role - User role
-   * @returns {Promise<Object>} Uploaded attachment
+   * @returns {Promise} Response with uploaded attachment
    */
-  async uploadAttachment(ticketId, file, userId, role) {
+  async uploadAttachment(ticketId, file) {
     try {
-      if (!file) {
-        throw new Error('File is required');
-      }
+      const formData = new FormData();
+      formData.append('file', file);
       
-      const ticket = await Ticket.findById(ticketId);
+      const response = await api.post(`/professional/support/tickets/${ticketId}/attachments`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
       
-      if (!ticket) {
-        throw new Error('Ticket not found');
-      }
-      
-      // Check if user has access to this ticket
-      if (role !== 'admin' && ticket.user.toString() !== userId) {
-        throw new Error('Not authorized to upload attachment to this ticket');
-      }
-      
-      // Check if ticket is closed
-      if (ticket.status === 'closed') {
-        throw new Error('Cannot upload attachment to a closed ticket');
-      }
-      
-      // Upload file to S3
-      const fileKey = `tickets/${ticketId}/attachments/${Date.now()}_${file.originalname}`;
-      const fileUrl = await uploadToS3(file, fileKey);
-      
-      // Create attachment
-      const attachment = {
-        fileName: file.originalname,
-        fileUrl,
-        fileSize: file.size,
-        mimeType: file.mimetype,
-        uploadedBy: userId,
-        uploadedAt: new Date()
-      };
-      
-      // Add attachment to ticket
-      ticket.attachments.push(attachment);
-      await ticket.save();
-      
-      return attachment;
+      return response.data;
     } catch (error) {
-      logger.error('Upload attachment error:', error);
+      console.error('Error uploading attachment:', error);
       throw error;
     }
   }
 
   /**
    * Get common issues and solutions
-   * @returns {Promise<Array>} Common issues and solutions
+   * @returns {Promise} Response with common issues and solutions
    */
   async getCommonIssues() {
     try {
-      const commonIssues = await FAQ.find({
-        isActive: true,
-        isCommonIssue: true
-      }).populate('category', 'name');
-      
-      return commonIssues;
+      const response = await api.get('/professional/support/common-issues');
+      return response.data;
     } catch (error) {
-      logger.error('Get common issues error:', error);
+      console.error('Error fetching common issues:', error);
       throw error;
     }
   }
@@ -495,83 +177,28 @@ class SupportService {
   /**
    * Send feedback about the app
    * @param {Object} feedbackData - Feedback data
-   * @param {string} userId - User ID
-   * @param {string} role - User role
-   * @returns {Promise<Object>} Saved feedback
+   * @returns {Promise} Response with status
    */
-  async sendFeedback(feedbackData, userId, role) {
+  async sendFeedback(feedbackData) {
     try {
-      const { type, message, rating } = feedbackData;
-      
-      if (!type || !message || !rating) {
-        throw new Error('Type, message, and rating are required');
-      }
-      
-      // Create feedback
-      const feedback = new Feedback({
-        user: userId,
-        userRole: role,
-        type,
-        message,
-        rating,
-        submittedAt: new Date()
-      });
-      
-      await feedback.save();
-      
-      // Notify admins about new feedback
-      const admins = await User.find({ role: 'admin' });
-      
-      for (const admin of admins) {
-        await NotificationService.createNotification({
-          recipient: admin._id,
-          type: 'new_feedback',
-          title: 'New App Feedback',
-          message: `New ${type} feedback with rating ${rating}/5`,
-          data: { feedbackId: feedback._id }
-        });
-      }
-      
-      return feedback;
+      const response = await api.post('/professional/support/feedback', feedbackData);
+      return response.data;
     } catch (error) {
-      logger.error('Send feedback error:', error);
+      console.error('Error sending feedback:', error);
       throw error;
     }
   }
 
   /**
    * Check if support is available for live chat
-   * @returns {Promise<Object>} Availability status
+   * @returns {Promise} Response with availability status
    */
   async checkLiveChatAvailability() {
     try {
-      // Get current time in IST
-      const now = new Date();
-      const hours = now.getHours();
-      const day = now.getDay(); // 0 is Sunday, 6 is Saturday
-      
-      // Check if current time is within support hours (9 AM to 6 PM, Monday to Friday)
-      const isWithinSupportHours = hours >= 9 && hours < 18 && day >= 1 && day <= 5;
-      
-      // Check if any admin is online
-      const onlineAdmins = await User.countDocuments({
-        role: 'admin',
-        isOnline: true,
-        lastActive: { $gt: new Date(Date.now() - 5 * 60 * 1000) } // Active in the last 5 minutes
-      });
-      
-      return {
-        isAvailable: isWithinSupportHours && onlineAdmins > 0,
-        supportHours: {
-          start: '9:00 AM',
-          end: '6:00 PM',
-          timezone: 'IST',
-          days: 'Monday to Friday'
-        },
-        onlineAgents: onlineAdmins
-      };
+      const response = await api.get('/professional/support/live-chat/availability');
+      return response.data;
     } catch (error) {
-      logger.error('Check live chat availability error:', error);
+      console.error('Error checking live chat availability:', error);
       throw error;
     }
   }
@@ -579,95 +206,17 @@ class SupportService {
   /**
    * Initiate a live chat session
    * @param {Object} chatData - Chat initialization data
-   * @param {string} userId - User ID
-   * @param {string} role - User role
-   * @returns {Promise<Object>} Chat session data
+   * @returns {Promise} Response with chat session data
    */
-  async initiateLiveChat(chatData, userId, role) {
+  async initiateLiveChat(chatData) {
     try {
-      const { topic, message } = chatData;
-      
-      if (!topic || !message) {
-        throw new Error('Topic and message are required');
-      }
-      
-      // Check availability
-      const availability = await this.checkLiveChatAvailability();
-      
-      if (!availability.isAvailable) {
-        throw new Error('Live chat support is not available at the moment');
-      }
-      
-      // Get user info
-      let userInfo;
-      if (role === 'user') {
-        userInfo = await User.findById(userId).select('name email phone');
-      } else if (role === 'professional') {
-        const professional = await Professional.findOne({ userId }).select('name email phone');
-        userInfo = professional;
-      }
-      
-      if (!userInfo) {
-        throw new Error('User not found');
-      }
-      
-      // Find available admin
-      const admin = await User.findOne({
-        role: 'admin',
-        isOnline: true,
-        lastActive: { $gt: new Date(Date.now() - 5 * 60 * 1000) } // Active in the last 5 minutes
-      }).select('_id name');
-      
-      if (!admin) {
-        throw new Error('No support agents available at the moment');
-      }
-      
-      // Create chat session
-      const chatSession = new ChatSession({
-        user: userId,
-        userRole: role,
-        admin: admin._id,
-        topic,
-        startedAt: new Date(),
-        status: 'active'
-      });
-      
-      await chatSession.save();
-      
-      // Create initial message
-      const initialMessage = new ChatMessage({
-        session: chatSession._id,
-        sender: userId,
-        senderRole: role,
-        message,
-        sentAt: new Date()
-      });
-      
-      await initialMessage.save();
-      
-      // Notify admin about new chat
-      await NotificationService.createNotification({
-        recipient: admin._id,
-        type: 'new_chat',
-        title: 'New Live Chat Request',
-        message: `New chat request from ${userInfo.name}: ${topic}`,
-        data: { chatSessionId: chatSession._id }
-      });
-      
-      return {
-        sessionId: chatSession._id,
-        agent: {
-          id: admin._id,
-          name: admin.name
-        },
-        startedAt: chatSession.startedAt,
-        status: chatSession.status
-      };
+      const response = await api.post('/professional/support/live-chat/initiate', chatData);
+      return response.data;
     } catch (error) {
-      logger.error('Initiate live chat error:', error);
+      console.error('Error initiating live chat:', error);
       throw error;
     }
   }
 }
 
-module.exports = new SupportService();
+export default new SupportService();
