@@ -42,7 +42,11 @@ const swaggerDefinition = {
   },
   servers: [
     {
+<<<<<<< HEAD
       url: '/',
+=======
+      url: 'https://shayakbackend-production.up.railway.app',
+>>>>>>> 5c6dd8ba253230f60483cda7ac8f8b1d55291b8b
       description: 'Development server',
     },
   ],
@@ -72,7 +76,7 @@ const swaggerDefinition = {
 
 const options = {
   swaggerDefinition,
-  apis: ['./routes/*.js'], // Path to route files with Swagger comments
+  apis: ['./src/routes/*.js'], // Path to route files with Swagger comments
 };
 
 const swaggerSpec = swaggerJsDoc(options);
