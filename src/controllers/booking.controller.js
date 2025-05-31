@@ -1,53 +1,85 @@
-// src/controllers/booking.controller.js
 const mongoose = require('mongoose');
 const Booking = require('../models/booking.model');
 const Service = require('../models/service.model');
 const Professional = require('../models/professional.model');
-const BookingService = require('../services/BookingService');
-const NotificationService = require('../services/notification.service');
-const GeospatialService = require('../services/geospatial.service');
-const logger = require('../config/logger');
+const BookingService = require('../services/BookingService'); // Use exact filename
+// const logger = require('../config/logger'); // Comment out if not available
 
 class BookingController {
   /**
    * Create a new booking
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
    */
   async createBooking(req, res) {
+    console.log('🚀 [STEP 1] Booking API called');
+    console.log('📊 Request body:', JSON.stringify(req.body, null, 2));
+    console.log('👤 User ID:', req.user?._id);
+    
     try {
-      logger.info('Creating booking with data:', req.body);
+      console.log('🚀 [STEP 2] Starting booking creation...');
+      
       const { serviceId, location, scheduledDate } = req.body;
 
       // Basic validation
+      console.log('🔍 [STEP 3] Validating input...');
       if (!serviceId || !location?.coordinates || !scheduledDate) {
+        console.log('❌ [STEP 3] Validation failed - missing fields');
         return res.status(400).json({
           success: false,
-          message: 'Missing required fields'
+          message: 'Missing required fields: serviceId, location.coordinates, scheduledDate'
         });
       }
+      console.log('✅ [STEP 3] Validation passed');
 
-      // Get service
+      // Validate coordinates
+      console.log('🔍 [STEP 4] Validating coordinates...');
+      if (!Array.isArray(location.coordinates) || location.coordinates.length !== 2) {
+        console.log('❌ [STEP 4] Invalid coordinates format');
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid location coordinates format. Expected [longitude, latitude]'
+        });
+      }
+      console.log('✅ [STEP 4] Coordinates valid:', location.coordinates);
+
+      // Check if service exists
+      console.log('🔍 [STEP 5] Finding service...');
       const service = await Service.findById(serviceId);
       if (!service) {
+        console.log('❌ [STEP 5] Service not found:', serviceId);
         return res.status(404).json({
           success: false,
           message: 'Service not found'
         });
       }
+      console.log('✅ [STEP 5] Service found:', service.name, '(', service.category, ')');
 
       // Create booking through service
-      const booking = await BookingService.createBooking(req.body, req.user._id);
+      console.log('🔍 [STEP 6] Calling BookingService.createBooking...');
+      
+      // Add timeout to detect hanging
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Booking creation timeout after 10 seconds')), 10000);
+      });
+      
+      const bookingPromise = BookingService.createBooking(req.body, req.user._id);
+      
+      const booking = await Promise.race([bookingPromise, timeoutPromise]);
+      
+      console.log('✅ [STEP 6] BookingService completed, booking ID:', booking._id);
 
       // Send response
+      console.log('🔍 [STEP 7] Sending response...');
       res.status(201).json({
         success: true,
+        message: 'Booking created successfully',
         data: {
           booking: {
             _id: booking._id,
             status: booking.status,
             scheduledDate: booking.scheduledDate,
             totalAmount: booking.totalAmount,
+            verificationCode: booking.verificationCode,
+            isEmergency: booking.isEmergency,
             service: {
               _id: service._id,
               name: service.name,
@@ -56,20 +88,25 @@ class BookingController {
           }
         }
       });
+      console.log('✅ [STEP 7] Response sent successfully');
+      
     } catch (error) {
-      logger.error('Booking creation error:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to create booking',
-        error: error.message
-      });
-    }
-  }
-
+      console.error('❌ [ERROR] Booking creation failed at step:', error.message);
+      console.error('📚 Full error stack:', error.stack);
+      
+      // Make sure we always send a response
+      if (!res.headersSent) {
+        res.status(500).json({
+          success: false,
+          message: error.message || 'Failed to create booking',
+          debug: {
+            step: 'unknown',
+            timestamp: new Date().toISOString()
+          }
+        });
+      }}}
   /**
    * Professional accepts booking
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
    */
   async acceptBooking(req, res) {
     try {
@@ -82,10 +119,13 @@ class BookingController {
         });
       }
 
+      console.log(`👨‍🔧 Professional ${req.user._id} accepting booking ${bookingId}`);
+
       const booking = await BookingService.acceptBooking(bookingId, req.user._id);
 
       res.json({
         success: true,
+        message: 'Booking accepted successfully',
         data: {
           booking: {
             _id: booking._id,
@@ -95,8 +135,9 @@ class BookingController {
         }
       });
     } catch (error) {
-      logger.error('Accept booking error:', error);
-      res.status(error.message.includes('not found') ? 404 : 400).json({
+      console.error('❌ Accept booking error:', error);
+      const statusCode = error.message.includes('not found') ? 404 : 400;
+      res.status(statusCode).json({
         success: false,
         message: error.message || 'Failed to accept booking'
       });
@@ -105,86 +146,184 @@ class BookingController {
 
   /**
    * Get active booking
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
    */
-  async getActiveBooking(req, res) {
-    try {
-      // Determine query based on user role
-      let query = {};
-      
-      if (req.userRole === 'user') {
-        query = {
-          user: req.user._id,
-          status: { $in: ['pending', 'accepted', 'in_progress'] }
-        };
-      } else if (req.userRole === 'professional') {
-        query = {
-          professional: req.user._id,
-          status: { $in: ['accepted', 'in_progress'] }
-        };
-      }
-
-      const booking = await Booking.findOne(query)
-        .populate('service', 'name category pricing')
-        .populate('professional', 'name phone')
-        .populate('user', 'name phone')
-        .lean();
-
-      if (!booking) {
-        return res.status(404).json({
-          success: false,
-          message: 'No active booking found'
-        });
-      }
-
-      // Format response based on user role
-      let response = {
-        _id: booking._id,
-        service: booking.service,
-        scheduledDate: booking.scheduledDate,
-        status: booking.status,
-        totalAmount: booking.totalAmount,
-        location: booking.location,
-        tracking: booking.tracking
+  /**
+ * Get active booking - OPTIMIZED VERSION with timeout handling
+ */
+async getActiveBooking(req, res) {
+  console.log('🔍 [ACTIVE-BOOKING] Getting active booking for user:', req.user._id);
+  console.log('👤 [ACTIVE-BOOKING] User role:', req.userRole);
+  
+  try {
+    // Determine query based on user role
+    let query = {};
+    
+    if (req.userRole === 'user') {
+      query = {
+        user: req.user._id,
+        status: { $in: ['pending', 'accepted', 'in_progress'] }
       };
+    } else if (req.userRole === 'professional') {
+      query = {
+        professional: req.user._id,
+        status: { $in: ['accepted', 'in_progress'] }
+      };
+    }
 
-      if (req.userRole === 'user') {
-        response.professional = booking.professional ? {
-          _id: booking.professional._id,
-          name: booking.professional.name,
-          phone: booking.professional.phone
-        } : null;
-      } else if (req.userRole === 'professional') {
-        response.user = {
-          _id: booking.user._id,
-          name: booking.user.name,
-          phone: booking.user.phone
-        };
-        // Only share verification code with professional once service is in progress
-        if (booking.status === 'in_progress') {
-          response.verificationCode = booking.verificationCode;
-        }
-      }
+    console.log('🔍 [ACTIVE-BOOKING] Query:', JSON.stringify(query));
 
-      res.json({
-        success: true,
-        data: { booking: response }
+    // Step 1: Find booking without populate first (faster)
+    console.log('📋 [ACTIVE-BOOKING] Step 1: Finding booking...');
+    
+    const findBookingPromise = Booking.findOne(query).lean();
+    const findTimeout = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Find booking timeout')), 3000);
+    });
+    
+    const booking = await Promise.race([findBookingPromise, findTimeout]);
+
+    if (!booking) {
+      console.log('❌ [ACTIVE-BOOKING] No active booking found');
+      return res.status(404).json({
+        success: false,
+        message: 'No active booking found'
       });
-    } catch (error) {
-      logger.error('Get active booking error:', error);
+    }
+
+    console.log('✅ [ACTIVE-BOOKING] Found booking:', booking._id);
+
+    // Step 2: Get related data separately with timeout protection
+    console.log('🔍 [ACTIVE-BOOKING] Step 2: Getting related data...');
+    
+    const promises = [];
+    
+    // Get service data
+    if (booking.service) {
+      const servicePromise = Service.findById(booking.service)
+        .select('name category pricing')
+        .lean();
+      promises.push(servicePromise.catch(err => {
+        console.warn('⚠️ [ACTIVE-BOOKING] Service lookup failed:', err.message);
+        return null;
+      }));
+    } else {
+      promises.push(Promise.resolve(null));
+    }
+    
+    // Get professional data (if needed)
+    if (booking.professional && req.userRole === 'user') {
+      const professionalPromise = Professional.findById(booking.professional)
+        .select('name phone')
+        .lean();
+      promises.push(professionalPromise.catch(err => {
+        console.warn('⚠️ [ACTIVE-BOOKING] Professional lookup failed:', err.message);
+        return null;
+      }));
+    } else {
+      promises.push(Promise.resolve(null));
+    }
+    
+    // Get user data (if needed)
+    if (booking.user && req.userRole === 'professional') {
+      const userPromise = User.findById(booking.user)
+        .select('name phone')
+        .lean();
+      promises.push(userPromise.catch(err => {
+        console.warn('⚠️ [ACTIVE-BOOKING] User lookup failed:', err.message);
+        return null;
+      }));
+    } else {
+      promises.push(Promise.resolve(null));
+    }
+
+    // Execute all queries with timeout
+    const queryTimeout = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Related data timeout')), 5000);
+    });
+    
+    const allQueries = Promise.all(promises);
+    const [service, professional, user] = await Promise.race([allQueries, queryTimeout]);
+
+    console.log('✅ [ACTIVE-BOOKING] Related data retrieved');
+    console.log('   - Service:', service ? service.name : 'Not loaded');
+    console.log('   - Professional:', professional ? professional.name : 'Not needed/loaded');
+    console.log('   - User:', user ? user.name : 'Not needed/loaded');
+
+    // Step 3: Format response based on user role
+    console.log('📦 [ACTIVE-BOOKING] Step 3: Formatting response...');
+    
+    let response = {
+      _id: booking._id,
+      service: service || { _id: booking.service, name: 'Service details unavailable' },
+      scheduledDate: booking.scheduledDate,
+      status: booking.status,
+      totalAmount: booking.totalAmount,
+      location: booking.location,
+      tracking: booking.tracking || {},
+      isEmergency: booking.isEmergency || false
+    };
+
+    if (req.userRole === 'user') {
+      response.professional = professional ? {
+        _id: professional._id,
+        name: professional.name,
+        phone: professional.phone
+      } : (booking.professional ? {
+        _id: booking.professional,
+        name: 'Professional details unavailable',
+        phone: 'N/A'
+      } : null);
+    } else if (req.userRole === 'professional') {
+      response.user = user ? {
+        _id: user._id,
+        name: user.name,
+        phone: user.phone
+      } : {
+        _id: booking.user,
+        name: 'User details unavailable',
+        phone: 'N/A'
+      };
+      
+      // Only share verification code with professional once service is in progress
+      if (booking.status === 'in_progress') {
+        response.verificationCode = booking.verificationCode;
+      }
+    }
+
+    console.log('✅ [ACTIVE-BOOKING] Response formatted successfully');
+
+    res.json({
+      success: true,
+      data: { booking: response }
+    });
+    
+  } catch (error) {
+    console.error('❌ [ACTIVE-BOOKING] Error:', error.message);
+    console.error('📚 [ACTIVE-BOOKING] Stack:', error.stack);
+    
+    // Provide more specific error messages
+    let errorMessage = 'Failed to get active booking';
+    if (error.message.includes('timeout')) {
+      errorMessage = 'Database query timeout - please try again';
+    } else if (error.message.includes('connection')) {
+      errorMessage = 'Database connection issue - please try again';
+    }
+    
+    if (!res.headersSent) {
       res.status(500).json({
         success: false,
-        message: 'Failed to get active booking',
-        error: error.message
+        message: errorMessage,
+        debug: {
+          error: error.message,
+          timestamp: new Date().toISOString()
+        }
       });
     }
   }
+}
 
   /**
    * Get booking history
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
    */
   async getBookingHistory(req, res) {
     try {
@@ -227,7 +366,8 @@ class BookingController {
           createdAt: booking.createdAt,
           completedAt: booking.completedAt,
           cancelledAt: booking.cancelledAt,
-          rating: booking.rating
+          rating: booking.rating,
+          isEmergency: booking.isEmergency
         };
 
         if (req.userRole === 'user') {
@@ -257,7 +397,7 @@ class BookingController {
         }
       });
     } catch (error) {
-      logger.error('Get booking history failed:', error);
+      console.error('❌ Get booking history failed:', error);
       return res.status(500).json({ 
         success: false, 
         error: 'Failed to get booking history' 
@@ -266,75 +406,7 @@ class BookingController {
   }
 
   /**
-   * Get tracking info for a booking
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async getTrackingInfo(req, res) {
-    try {
-      const { bookingId } = req.params;
-
-      const booking = await Booking.findById(bookingId)
-        .populate('professional', 'name phone currentLocation');
-
-      if (!booking) {
-        return res.status(404).json({ 
-          success: false, 
-          error: 'Booking not found' 
-        });
-      }
-
-      // Check authorization
-      if (req.userRole === 'user' && booking.user.toString() !== req.user._id.toString()) {
-        return res.status(403).json({ 
-          success: false, 
-          error: 'Not authorized to access this booking' 
-        });
-      } else if (req.userRole === 'professional' && booking.professional && 
-                booking.professional._id.toString() !== req.user._id.toString()) {
-        return res.status(403).json({ 
-          success: false, 
-          error: 'Not authorized to access this booking' 
-        });
-      }
-
-      // Calculate ETA if professional is assigned
-      let eta = null;
-      if (booking.professional?.currentLocation) {
-        if (booking.tracking && booking.tracking.eta) {
-          eta = booking.tracking.eta;
-        } else {
-          eta = GeospatialService.estimateETA(
-            booking.professional.currentLocation.coordinates,
-            booking.location.coordinates
-          );
-        }
-      }
-
-      res.json({
-        success: true,
-        tracking: {
-          status: booking.status,
-          professionalLocation: booking.professional?.currentLocation,
-          destination: booking.location,
-          eta,
-          startedAt: booking.tracking?.startedAt,
-          arrivedAt: booking.tracking?.arrivedAt
-        }
-      });
-    } catch (error) {
-      logger.error('Get tracking info failed:', error);
-      res.status(500).json({ 
-        success: false, 
-        error: 'Failed to get tracking info' 
-      });
-    }
-  }
-
-  /**
    * Complete a booking with verification code
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
    */
   async completeBooking(req, res) {
     try {
@@ -344,7 +416,7 @@ class BookingController {
       if (!verificationCode) {
         return res.status(400).json({ 
           success: false, 
-          error: 'Verification code is required' 
+          message: 'Verification code is required' 
         });
       }
 
@@ -360,18 +432,16 @@ class BookingController {
         }
       });
     } catch (error) {
-      logger.error('Complete booking failed:', error);
+      console.error('❌ Complete booking failed:', error);
       res.status(error.message.includes('not found') ? 404 : 400).json({ 
         success: false, 
-        error: error.message || 'Failed to complete booking' 
+        message: error.message || 'Failed to complete booking' 
       });
     }
   }
 
   /**
    * Cancel a booking
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
    */
   async cancelBooking(req, res) {
     try {
@@ -390,18 +460,16 @@ class BookingController {
         }
       });
     } catch (error) {
-      logger.error('Cancel booking failed:', error);
+      console.error('❌ Cancel booking failed:', error);
       res.status(error.message.includes('not found') ? 404 : 400).json({ 
         success: false, 
-        error: error.message || 'Failed to cancel booking' 
+        message: error.message || 'Failed to cancel booking' 
       });
     }
   }
 
   /**
    * Reschedule a booking
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
    */
   async rescheduleBooking(req, res) {
     try {
@@ -411,7 +479,7 @@ class BookingController {
       if (!scheduledDate) {
         return res.status(400).json({ 
           success: false, 
-          error: 'New scheduled date is required' 
+          message: 'New scheduled date is required' 
         });
       }
 
@@ -427,18 +495,16 @@ class BookingController {
         }
       });
     } catch (error) {
-      logger.error('Reschedule booking failed:', error);
+      console.error('❌ Reschedule booking failed:', error);
       res.status(error.message.includes('not found') ? 404 : 400).json({ 
         success: false, 
-        error: error.message || 'Failed to reschedule booking' 
+        message: error.message || 'Failed to reschedule booking' 
       });
     }
   }
 
   /**
    * Update ETA for a booking
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
    */
   async updateETA(req, res) {
     try {
@@ -448,7 +514,7 @@ class BookingController {
       if (!etaMinutes) {
         return res.status(400).json({ 
           success: false, 
-          error: 'ETA in minutes is required' 
+          message: 'ETA in minutes is required' 
         });
       }
 
@@ -463,116 +529,16 @@ class BookingController {
         }
       });
     } catch (error) {
-      logger.error('Update ETA failed:', error);
+      console.error('❌ Update ETA failed:', error);
       res.status(error.message.includes('not found') ? 404 : 400).json({ 
         success: false, 
-        error: error.message || 'Failed to update ETA' 
-      });
-    }
-  }
-
-  /**
-   * Get booking details
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async getBookingDetails(req, res) {
-    try {
-      const { bookingId } = req.params;
-
-      const booking = await Booking.findById(bookingId)
-        .populate('service', 'name category pricing description')
-        .populate('professional', 'name phone email')
-        .populate('user', 'name phone email')
-        .populate('cancelledBy', 'name');
-
-      if (!booking) {
-        return res.status(404).json({ 
-          success: false, 
-          error: 'Booking not found' 
-        });
-      }
-
-      // Check authorization
-      if (req.userRole === 'user' && booking.user._id.toString() !== req.user._id.toString()) {
-        return res.status(403).json({ 
-          success: false, 
-          error: 'Not authorized to access this booking' 
-        });
-      } else if (req.userRole === 'professional' && booking.professional && 
-                booking.professional._id.toString() !== req.user._id.toString()) {
-        return res.status(403).json({ 
-          success: false, 
-          error: 'Not authorized to access this booking' 
-        });
-      }
-
-      // Format response
-      const response = {
-        _id: booking._id,
-        service: booking.service,
-        scheduledDate: booking.scheduledDate,
-        status: booking.status,
-        totalAmount: booking.totalAmount,
-        location: booking.location,
-        createdAt: booking.createdAt,
-        completedAt: booking.completedAt,
-        cancelledAt: booking.cancelledAt,
-        tracking: booking.tracking,
-        rating: booking.rating,
-        reschedulingHistory: booking.reschedulingHistory,
-        paymentStatus: booking.paymentStatus
-      };
-
-      // Add role-specific data
-      if (req.userRole === 'user') {
-        response.professional = booking.professional ? {
-          _id: booking.professional._id,
-          name: booking.professional.name,
-          phone: booking.professional.phone
-        } : null;
-      } else if (req.userRole === 'professional') {
-        response.user = {
-          _id: booking.user._id,
-          name: booking.user.name,
-          phone: booking.user.phone
-        };
-
-        // Only share verification code with professional once service is in progress
-        if (booking.status === 'in_progress') {
-          response.verificationCode = booking.verificationCode;
-        }
-      }
-
-      // Add cancellation info if applicable
-      if (booking.status === 'cancelled' && booking.cancelledBy) {
-        response.cancellationInfo = {
-          cancelledAt: booking.cancelledAt,
-          cancelledBy: {
-            _id: booking.cancelledBy._id,
-            name: booking.cancelledBy.name
-          },
-          reason: booking.cancellationReason
-        };
-      }
-
-      res.json({
-        success: true,
-        booking: response
-      });
-    } catch (error) {
-      logger.error('Get booking details failed:', error);
-      res.status(500).json({ 
-        success: false, 
-        error: 'Failed to get booking details' 
+        message: error.message || 'Failed to update ETA' 
       });
     }
   }
 
   /**
    * Rate a booking
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
    */
   async rateBooking(req, res) {
     try {
@@ -582,7 +548,7 @@ class BookingController {
       if (!rating || rating < 1 || rating > 5) {
         return res.status(400).json({ 
           success: false, 
-          error: 'Rating must be between 1 and 5' 
+          message: 'Rating must be between 1 and 5' 
         });
       }
 
@@ -594,18 +560,16 @@ class BookingController {
         rating: booking.rating
       });
     } catch (error) {
-      logger.error('Rate booking failed:', error);
+      console.error('❌ Rate booking failed:', error);
       res.status(error.message.includes('not found') ? 404 : 400).json({ 
         success: false, 
-        error: error.message || 'Failed to rate booking' 
+        message: error.message || 'Failed to rate booking' 
       });
     }
   }
 
   /**
    * Start a service
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
    */
   async startService(req, res) {
     try {
@@ -623,18 +587,16 @@ class BookingController {
         }
       });
     } catch (error) {
-      logger.error('Start service failed:', error);
+      console.error('❌ Start service failed:', error);
       res.status(error.message.includes('not found') ? 404 : 400).json({ 
         success: false, 
-        error: error.message || 'Failed to start service' 
+        message: error.message || 'Failed to start service' 
       });
     }
   }
 
   /**
    * Mark professional as arrived
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
    */
   async professionalArrived(req, res) {
     try {
@@ -651,18 +613,16 @@ class BookingController {
         }
       });
     } catch (error) {
-      logger.error('Professional arrived marking failed:', error);
+      console.error('❌ Professional arrived marking failed:', error);
       res.status(error.message.includes('not found') ? 404 : 400).json({ 
         success: false, 
-        error: error.message || 'Failed to mark arrival' 
+        message: error.message || 'Failed to mark arrival' 
       });
     }
   }
 
   /**
    * Create emergency booking
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
    */
   async createEmergencyBooking(req, res) {
     try {
@@ -671,7 +631,7 @@ class BookingController {
       if (!serviceId || !location?.coordinates) {
         return res.status(400).json({ 
           success: false, 
-          error: 'Service ID and location are required' 
+          message: 'Service ID and location are required' 
         });
       }
 
@@ -679,7 +639,7 @@ class BookingController {
       if (!service) {
         return res.status(404).json({ 
           success: false, 
-          error: 'Service not found' 
+          message: 'Service not found' 
         });
       }
 
@@ -701,10 +661,10 @@ class BookingController {
         }
       });
     } catch (error) {
-      logger.error('Emergency booking creation failed:', error);
+      console.error('❌ Emergency booking creation failed:', error);
       res.status(500).json({ 
         success: false, 
-        error: 'Failed to create emergency booking' 
+        message: 'Failed to create emergency booking' 
       });
     }
   }
