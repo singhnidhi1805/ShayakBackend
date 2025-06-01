@@ -43,7 +43,7 @@ const swaggerDefinition = {
   servers: [
     {
       url: '/',
-      url: 'https://shayakbackendapi.onrender.com',
+      url: 'https://shayakbackendapi.onrender.com/',
       description: 'Development server',
     },
   ],
