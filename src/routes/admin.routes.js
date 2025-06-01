@@ -45,10 +45,15 @@ const auth = require('../middleware/auth.middleware');
  *                 activeServices:
  *                   type: integer
  *                   example: 40
+ *       "401":
+ *         description: Authentication failed
+ *       "403":
+ *         description: Access denied - Admin role required
  *       "500":
  *         description: Server error
  */
-router.get('/dashboard/stats', auth.admin, adminController.getDashboardStats);
+// FIXED: Using auth(['admin']) instead of auth.admin
+router.get('/dashboard/stats', auth(['admin']), adminController.getDashboardStats);
 
 /**
  * @swagger
@@ -98,12 +103,17 @@ router.get('/dashboard/stats', auth.admin, adminController.getDashboardStats);
  *                   example: "Profile updated successfully"
  *       "400":
  *         description: Invalid request, e.g., incorrect password
+ *       "401":
+ *         description: Authentication failed
+ *       "403":
+ *         description: Access denied - Admin role required
  *       "404":
  *         description: Admin not found
  *       "500":
  *         description: Server error
  */
-router.patch('/profile', auth.admin, adminController.updateProfile);
+// FIXED: Using auth(['admin']) instead of auth.admin
+router.patch('/profile', auth(['admin']), adminController.updateProfile);
 
 /**
  * @swagger
@@ -162,10 +172,15 @@ router.patch('/profile', auth.admin, adminController.updateProfile);
  *                       completionRate:
  *                         type: number
  *                         example: 50
+ *       "401":
+ *         description: Authentication failed
+ *       "403":
+ *         description: Access denied - Admin role required
  *       "500":
  *         description: Server error
  */
-router.get('/reports/:reportType', auth.admin, adminController.getReportData);
+// FIXED: Using auth(['admin']) instead of auth.admin
+router.get('/reports/:reportType', auth(['admin']), adminController.getReportData);
 
 /**
  * @swagger
@@ -198,9 +213,30 @@ router.get('/reports/:reportType', auth.admin, adminController.getReportData);
  *             schema:
  *               type: string
  *               format: binary
+ *       "401":
+ *         description: Authentication failed
+ *       "403":
+ *         description: Access denied - Admin role required
  *       "500":
  *         description: Server error
  */
-router.get('/reports/:reportType/export',auth.admin, adminController.exportReport);
+// FIXED: Using auth(['admin']) instead of auth.admin
+router.get('/reports/:reportType/export', auth(['admin']), adminController.exportReport);
+
+// Debug route for testing admin auth
+router.get('/test-auth', auth(['admin']), (req, res) => {
+  console.log('🔐 [ADMIN-TEST] Admin auth test successful');
+  console.log('👤 [ADMIN-TEST] Admin user:', req.user._id);
+  
+  res.json({
+    success: true,
+    message: 'Admin authentication working',
+    admin: {
+      id: req.user._id,
+      role: req.userRole,
+      name: req.user.name || 'Admin User'
+    }
+  });
+});
 
 module.exports = router;
