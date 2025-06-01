@@ -9,7 +9,7 @@ const earningsController = require('../controllers/earnings.controller');
  * @desc Get earnings summary with filter
  * @access Private (Professional only)
  */
-router.get('/earnings', auth.professional, earningsController.getEarnings);
+router.get('/earnings', auth(['professional']), earningsController.getEarnings);
 /**
  *
  * 
@@ -1194,76 +1194,76 @@ router.get('/earnings', auth.professional, earningsController.getEarnings);
  * @desc Get detailed earnings for a specific time period
  * @access Private (Professional only)
  */
-router.get('/earnings/details', auth.professional, earningsController.getEarningsDetails);
+router.get('/earnings/details',auth(['professional']), earningsController.getEarningsDetails);
 
 /**
  * @route GET /professional/earnings/transactions/:id
  * @desc Get transaction details
  * @access Private (Professional only)
  */
-router.get('/earnings/transactions/:id', auth.professional, earningsController.getTransactionDetails);
+router.get('/earnings/transactions/:id', auth(['professional']), earningsController.getTransactionDetails);
 
 /**
  * @route POST /professional/earnings/transactions/:id/invoice
  * @desc Generate invoice for a transaction
  * @access Private (Professional only)
  */
-router.post('/earnings/transactions/:id/invoice', auth.professional, earningsController.generateInvoice);
+router.post('/earnings/transactions/:id/invoice',auth(['professional']), earningsController.generateInvoice);
 
 /**
  * @route GET /professional/earnings/available-balance
  * @desc Get available balance for withdrawal
  * @access Private (Professional only)
  */
-router.get('/earnings/available-balance', auth.professional, earningsController.getAvailableBalance);
+router.get('/earnings/available-balance', auth(['professional']), earningsController.getAvailableBalance);
 
 /**
  * @route GET /professional/earnings/payment-methods
  * @desc Get payment methods
  * @access Private (Professional only)
  */
-router.get('/earnings/payment-methods', auth.professional, earningsController.getPaymentMethods);
+router.get('/earnings/payment-methods', auth(['professional']), earningsController.getPaymentMethods);
 
 /**
  * @route POST /professional/earnings/payment-methods
  * @desc Add payment method
  * @access Private (Professional only)
  */
-router.post('/earnings/payment-methods', auth.professional, earningsController.addPaymentMethod);
+router.post('/earnings/payment-methods', auth(['professional']), earningsController.addPaymentMethod);
 
 /**
  * @route DELETE /professional/earnings/payment-methods/:id
  * @desc Remove payment method
  * @access Private (Professional only)
  */
-router.delete('/earnings/payment-methods/:id', auth.professional, earningsController.removePaymentMethod);
+router.delete('/earnings/payment-methods/:id', auth(['professional']), earningsController.removePaymentMethod);
 
 /**
  * @route POST /professional/earnings/withdrawals
  * @desc Request withdrawal
  * @access Private (Professional only)
  */
-router.post('/earnings/withdrawals', auth.professional, earningsController.requestWithdrawal);
+router.post('/earnings/withdrawals', auth(['professional']), earningsController.requestWithdrawal);
 
 /**
  * @route GET /professional/earnings/withdrawals
  * @desc Get withdrawal history
  * @access Private (Professional only)
  */
-router.get('/earnings/withdrawals', auth.professional, earningsController.getWithdrawalHistory);
+router.get('/earnings/withdrawals', auth(['professional']), earningsController.getWithdrawalHistory);
 
 /**
  * @route GET /professional/earnings/withdrawals/:id
  * @desc Get withdrawal details
  * @access Private (Professional only)
  */
-router.get('/earnings/withdrawals/:id', auth.professional, earningsController.getWithdrawalDetails);
+router.get('/earnings/withdrawals/:id', auth(['professional']), earningsController.getWithdrawalDetails);
 
 /**
  * @route GET /professional/earnings/analytics
  * @desc Get earnings analytics
  * @access Private (Professional only)
  */
-router.get('/earnings/analytics', auth.professional, earningsController.getEarningsAnalytics);
+router.get('/earnings/analytics', auth(['professional']), earningsController.getEarningsAnalytics);
 
 module.exports = router;
