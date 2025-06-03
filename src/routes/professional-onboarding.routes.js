@@ -371,8 +371,4 @@ router.use((error, req, res, next) => {
   next(error);
 });
 
-<<<<<<< HEAD
 module.exports = router;
-=======
-module.exports = router;
->>>>>>> 4f60cd1 (Resolved merge conflicts)
