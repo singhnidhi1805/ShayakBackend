@@ -694,6 +694,22 @@ router.get('/test-professional-auth', auth(['professional']), (req, res) => {
     }
   });
 });
+<<<<<<< HEAD
+
+router.get('/test-admin-auth', auth(['admin']), (req, res) => {
+  console.log('🔐 [ADMIN-PROF-TEST] Admin auth test successful');
+  res.json({
+    success: true,
+    message: 'Admin auth working for professional routes',
+    user: { 
+      id: req.user._id, 
+      role: req.userRole,
+      name: req.user.name || 'Admin User'
+    }
+  });
+});
+=======
+>>>>>>> 4f60cd1 (Resolved merge conflicts)
 
 router.get('/test-admin-auth', auth(['admin']), (req, res) => {
   console.log('🔐 [ADMIN-PROF-TEST] Admin auth test successful');

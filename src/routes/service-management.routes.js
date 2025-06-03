@@ -391,4 +391,8 @@ router.get('/professional/test-auth', auth(['professional']), (req, res) => {
   });
 });
 
+<<<<<<< HEAD
 module.exports = router;
+=======
+module.exports = router;
+>>>>>>> 4f60cd1 (Resolved merge conflicts)
