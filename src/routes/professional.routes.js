@@ -145,51 +145,45 @@ router.get('/:id/availability', getProfessionalAvailability);
 // FIXED: Using auth() instead of auth (allows all authenticated users for validation)
 router.post('/documents/validate', auth(), validateProfessionalDocuments);
 
-// /**
-//  * @swagger
-//  * /api/professionals/location:
-//  *   put:
-//  *     tags:
-//  *       - Professional
-//  *     summary: Update the professional's location
-//  *     security:
-//  *       - bearerAuth: []
-//  *     requestBody:
-//  *       required: true
-//  *       content:
-//  *         application/json:
-//  *           schema:
-//  *             type: object
-//  *             properties:
-//  *               coordinates:
-//  *                 type: array
-//  *                 items:
-//  *                   type: number
-//  *                 description: Coordinates (longitude, latitude)
-//  *               isAvailable:
-//  *                 type: boolean
-//  *                 description: Availability status of the professional
-//  *     responses:
-//  *       200:
-//  *         description: Professional location updated successfully
-//  *         content:
-//  *           application/json:
-//  *             schema:
-//  *               type: object
-//  *               properties:
-//  *                 status:
-//  *                   type: string
-//  *       401:
-//  *         description: Unauthorized
-//  *       403:
-//  *         description: Access denied - Professional role required
-//  *       404:
-//  *         description: Professional not found
-//  *       500:
-//  *         description: Server error
-//  */
-// // FIXED: Using auth(['professional']) for professional-specific actions
-// router.put('/location', auth(['professional']), updateProfessionalLocation);
+/**
+ * @swagger
+ * /api/professionals/location:
+ *   put:
+ *     tags:
+ *       - Professional
+ *     summary: Update the professional's location
+ *     parameters:
+ *       - in: body
+ *         name: location
+ *         description: Location details of the professional
+ *         required: true
+ *         schema:
+ *           type: object
+ *           properties:
+ *             coordinates:
+ *               type: array
+ *               items:
+ *                 type: number
+ *               description: Coordinates (latitude, longitude)
+ *             isAvailable:
+ *               type: boolean
+ *               description: Availability status of the professional
+ *     responses:
+ *       200:
+ *         description: Professional location updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *       404:
+ *         description: Professional not found
+ *       500:
+ *         description: Server error
+ */
+router.put('/location', auth, updateProfessionalLocation);
 
 /**
  * @swagger
@@ -599,463 +593,38 @@ router.post(
 // FIXED: Using auth(['professional']) instead of auth
 router.put('/profile', auth(['professional']), updateProfessionalProfile);
 
-// FIXED: Using auth(['admin']) for onboarding (assuming admin creates professionals)
-router.post('/onboard', auth(['admin']), async (req, res) => {
-  try {
-    console.log('👨‍💼 [PROF-ONBOARD] Admin onboarding new professional');
-    
-    // Add validation if professionalValidation exists
-    // const { error } = professionalValidation.onboarding.validate(req.body);
-    // if (error) {
-    //   return res.status(400).json({ error: error.details[0].message });
-    // }
-
-    const professional = await ProfessionalService.onboardProfessional(req.body);
-    
-    console.log('✅ Professional onboarded:', professional._id);
-    
-    res.status(201).json({
-      success: true,
-      message: 'Professional onboarded successfully',
-      professional
-    });
-  } catch (error) {
-    console.error('❌ Error onboarding professional:', error);
-    res.status(500).json({ 
-      success: false,
-      error: error.message 
-    });
-  }
-});
-
-// Alternative location update route (same as above but different path)
-// FIXED: Using auth(['professional']) instead of auth
-// router.put('/location', auth(['professional']), async (req, res) => {
-//   try {
-//     console.log('📍 [PROF-LOCATION] Updating professional location');
-    
-//     const { coordinates, isAvailable } = req.body;
-    
-//     if (!coordinates || !Array.isArray(coordinates) || coordinates.length !== 2) {
-//       return res.status(400).json({
-//         success: false,
-//         error: 'Invalid coordinates format. Expected [longitude, latitude]'
-//       });
-//     }
-    
-//     await ProfessionalService.updateLocation(req.user._id, coordinates, isAvailable);
-    
-//     console.log('✅ Professional location updated');
-    
-//     res.json({ 
-//       success: true,
-//       message: 'Location updated successfully'
-//     });
-//   } catch (error) {
-//     console.error('❌ Error updating location:', error);
-//     res.status(500).json({ 
-//       success: false,
-//       error: error.message 
-//     });
-//   }
-// });
-
-// FIXED: Using auth(['professional']) instead of auth
-router.get('/metrics', auth(['professional']), async (req, res) => {
-  try {
-    console.log('📊 [PROF-METRICS] Getting professional metrics');
-    
-    const metrics = await ProfessionalService.trackPerformanceMetrics(req.user._id);
-    
-    console.log('✅ Professional metrics retrieved');
-    
-    res.json({
-      success: true,
-      metrics
-    });
-  } catch (error) {
-    console.error('❌ Error getting metrics:', error);
-    res.status(500).json({ 
-      success: false,
-      error: error.message 
-    });
-  }
-});
-
-// Debug routes for testing auth
-router.get('/test-professional-auth', auth(['professional']), (req, res) => {
-  console.log('🔐 [PROF-TEST] Professional auth test successful');
-  res.json({
-    success: true,
-    message: 'Professional auth working',
-    user: { 
-      id: req.user._id, 
-      role: req.userRole,
-      name: req.user.name || 'Professional User'
+router.post('/onboard', auth, async (req, res) => {
+    try {
+      const { error } = professionalValidation.onboarding.validate(req.body);
+      if (error) {
+        return res.status(400).json({ error: error.details[0].message });
+      }
+  
+      const professional = await ProfessionalService.onboardProfessional(req.body);
+      res.status(201).json(professional);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
     }
   });
-});
-
-router.get('/test-admin-auth', auth(['admin']), (req, res) => {
-  console.log('🔐 [ADMIN-PROF-TEST] Admin auth test successful');
-  res.json({
-    success: true,
-    message: 'Admin auth working for professional routes',
-    user: { 
-      id: req.user._id, 
-      role: req.userRole,
-      name: req.user.name || 'Admin User'
+  
+  router.put('/location', auth, async (req, res) => {
+    try {
+      const { coordinates } = req.body;
+      await ProfessionalService.updateLocation(req.user._id, coordinates);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
     }
   });
-});
-/**
- * @swagger
- * /api/professionals/location:
- *   put:
- *     summary: Update professional location and availability
- *     tags: [Professionals]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - coordinates
- *               - isAvailable
- *             properties:
- *               coordinates:
- *                 type: array
- *                 items:
- *                   type: number
- *                 description: Location coordinates [longitude, latitude]
- *                 example: [77.5946, 12.9716]
- *               isAvailable:
- *                 type: boolean
- *                 description: Availability status
- *                 example: true
- *               accuracy:
- *                 type: number
- *                 description: Location accuracy in meters
- *                 example: 10
- *     responses:
- *       200:
- *         description: Location updated successfully
- *       400:
- *         description: Invalid coordinates
- *       404:
- *         description: Professional not found
- *       500:
- *         description: Server error
- */
-router.put('/location', auth(['professional']), async (req, res) => {
-  try {
-    console.log('📍 [LOCATION-ROUTE] Route handler called!');
-    console.log('📍 [LOCATION-ROUTE] User from token:', JSON.stringify(req.user, null, 2));
-    console.log('📍 [LOCATION-ROUTE] Request body:', JSON.stringify(req.body, null, 2));
-
-    const { coordinates, isAvailable, accuracy } = req.body;
-
-    // Validate coordinates
-    if (!coordinates || !Array.isArray(coordinates) || coordinates.length !== 2) {
-      console.log('❌ [LOCATION-ROUTE] Invalid coordinates format');
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid coordinates format. Expected [longitude, latitude]'
-      });
+  
+  router.get('/metrics', auth, async (req, res) => {
+    try {
+      const metrics = await ProfessionalService.trackPerformanceMetrics(req.user._id);
+      res.json(metrics);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
     }
-
-    const [longitude, latitude] = coordinates;
-
-    // Validate coordinate values
-    if (
-      typeof longitude !== 'number' || 
-      typeof latitude !== 'number' ||
-      longitude < -180 || longitude > 180 ||
-      latitude < -90 || latitude > 90
-    ) {
-      console.log('❌ [LOCATION-ROUTE] Invalid coordinate values');
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid coordinate values'
-      });
-    }
-
-    // Get the user ID from the token (the one that worked in auth middleware)
-    const userId = req.user._id || req.user.id;
-    console.log('🔍 [LOCATION-ROUTE] Searching for professional with ID:', userId);
-    console.log('🔍 [LOCATION-ROUTE] ID type:', typeof userId);
-
-    // Import mongoose to handle ObjectId conversion if needed
-    const mongoose = require('mongoose');
-    let searchId = userId;
-    
-    // Convert to ObjectId if it's a string
-    if (typeof userId === 'string') {
-      try {
-        searchId = new mongoose.Types.ObjectId(userId);
-        console.log('🔄 [LOCATION-ROUTE] Converted string ID to ObjectId:', searchId);
-      } catch (error) {
-        console.log('⚠️ [LOCATION-ROUTE] Could not convert to ObjectId, using string:', userId);
-        searchId = userId;
-      }
-    }
-
-    // Try multiple search methods to find the professional
-    console.log('🔍 [LOCATION-ROUTE] Method 1: Searching by _id...');
-    let professional = await Professional.findById(searchId);
-    
-    if (!professional) {
-      console.log('🔍 [LOCATION-ROUTE] Method 2: Searching by string ID...');
-      professional = await Professional.findById(userId);
-    }
-    
-    if (!professional) {
-      console.log('🔍 [LOCATION-ROUTE] Method 3: Searching by userId field...');
-      professional = await Professional.findOne({ userId: req.user.userId });
-    }
-
-    if (!professional) {
-      console.log('🔍 [LOCATION-ROUTE] Method 4: Searching with string conversion...');
-      professional = await Professional.findOne({ _id: userId.toString() });
-    }
-
-    // Debug: Let's see what's in the database
-    if (!professional) {
-      console.log('❌ [LOCATION-ROUTE] Professional still not found. Let me check the database...');
-      
-      // Get all professionals to debug
-      const allProfessionals = await Professional.find({}).select('_id name userId').limit(5);
-      console.log('📋 [LOCATION-ROUTE] Sample professionals in DB:');
-      allProfessionals.forEach(prof => {
-        console.log(`   - ID: ${prof._id} (${typeof prof._id}), Name: ${prof.name}, UserID: ${prof.userId}`);
-      });
-      
-      // Try one more search by exact match
-      console.log('🔍 [LOCATION-ROUTE] Method 5: Direct string search...');
-      professional = await Professional.findOne({ 
-        _id: '67cf175779f3c56aba6f0e01' 
-      });
-      
-      if (professional) {
-        console.log('✅ [LOCATION-ROUTE] Found with direct string search!');
-      }
-    }
-
-    if (!professional) {
-      console.log('❌ [LOCATION-ROUTE] Professional DEFINITIVELY not found');
-      return res.status(404).json({
-        success: false,
-        message: 'Professional not found',
-        debug: {
-          searchedIds: [userId, searchId, req.user.userId, '67cf175779f3c56aba6f0e01'],
-          userFromToken: req.user,
-          timestamp: new Date().toISOString()
-        }
-      });
-    }
-
-    console.log('✅ [LOCATION-ROUTE] Professional found:', professional.name);
-    console.log('📊 [LOCATION-ROUTE] Professional ID type:', typeof professional._id);
-
-    // Update location data
-    const updateData = {
-      currentLocation: {
-        type: 'Point',
-        coordinates: [longitude, latitude]
-      },
-      isAvailable: isAvailable,
-      updatedAt: new Date()
-    };
-
-    // Add accuracy if provided
-    if (accuracy && typeof accuracy === 'number') {
-      updateData.locationAccuracy = accuracy;
-    }
-
-    console.log('💾 [LOCATION-ROUTE] Updating professional with data:', updateData);
-
-    // Update the professional document using the found professional's ID
-    const updatedProfessional = await Professional.findByIdAndUpdate(
-      professional._id, // Use the ID from the found professional
-      updateData,
-      { new: true, runValidators: true }
-    );
-
-    if (!updatedProfessional) {
-      console.log('❌ [LOCATION-ROUTE] Update failed');
-      return res.status(500).json({
-        success: false,
-        message: 'Failed to update professional'
-      });
-    }
-
-    console.log('✅ [LOCATION-ROUTE] Professional updated successfully!');
-    console.log('📊 [LOCATION-ROUTE] New location:', updatedProfessional.currentLocation);
-    console.log('📊 [LOCATION-ROUTE] New availability:', updatedProfessional.isAvailable);
-
-    // Return success response
-    res.json({
-      success: true,
-      message: 'Location updated successfully',
-      data: {
-        professionalId: updatedProfessional._id,
-        currentLocation: updatedProfessional.currentLocation,
-        isAvailable: updatedProfessional.isAvailable,
-        lastUpdated: updatedProfessional.updatedAt
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ [LOCATION-ROUTE] Error:', error);
-    console.error('❌ [LOCATION-ROUTE] Error stack:', error.stack);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to update location',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
-  }
-});
-/**
- * @swagger
- * /api/professionals/availability:
- *   patch:
- *     summary: Toggle professional availability
- *     tags: [Professionals]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - isAvailable
- *             properties:
- *               isAvailable:
- *                 type: boolean
- *                 description: Availability status
- *                 example: true
- *     responses:
- *       200:
- *         description: Availability updated successfully
- *       404:
- *         description: Professional not found
- *       500:
- *         description: Server error
- */
-router.patch('/availability', auth(['professional']), async (req, res) => {
-  try {
-    console.log('🔄 [PROFESSIONALS-AVAILABILITY] Request from professional:', req.user._id);
-    
-    const { isAvailable } = req.body;
-
-    if (typeof isAvailable !== 'boolean') {
-      return res.status(400).json({
-        success: false,
-        message: 'isAvailable must be a boolean value'
-      });
-    }
-
-    // Find professional (try both methods)
-    let professional = await Professional.findById(req.user._id);
-    if (!professional) {
-      professional = await Professional.findOne({ userId: req.user._id });
-    }
-
-    if (!professional) {
-      return res.status(404).json({
-        success: false,
-        message: 'Professional not found'
-      });
-    }
-
-    // Update availability
-    const updatedProfessional = await Professional.findByIdAndUpdate(
-      professional._id,
-      { 
-        isAvailable: isAvailable,
-        updatedAt: new Date()
-      },
-      { new: true, runValidators: true }
-    );
-
-    console.log('✅ [PROFESSIONALS-AVAILABILITY] Availability updated successfully');
-
-    res.json({
-      success: true,
-      message: 'Availability updated successfully',
-      data: {
-        professionalId: updatedProfessional._id,
-        isAvailable: updatedProfessional.isAvailable,
-        lastUpdated: updatedProfessional.updatedAt
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ [PROFESSIONALS-AVAILABILITY] Error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to update availability',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
-  }
-});
-
-/**
- * @swagger
- * /api/professionals/availability:
- *   get:
- *     summary: Get professional availability status
- *     tags: [Professionals]
- *     security:
- *       - bearerAuth: []
- *     responses:
- *       200:
- *         description: Availability status retrieved successfully
- *       404:
- *         description: Professional not found
- *       500:
- *         description: Server error
- */
-router.get('/availability', auth(['professional']), async (req, res) => {
-  try {
-    // Find professional (try both methods)
-    let professional = await Professional.findById(req.user._id)
-      .select('isAvailable currentLocation updatedAt');
-    
-    if (!professional) {
-      professional = await Professional.findOne({ userId: req.user._id })
-        .select('isAvailable currentLocation updatedAt');
-    }
-
-    if (!professional) {
-      return res.status(404).json({
-        success: false,
-        message: 'Professional not found'
-      });
-    }
-
-    res.json({
-      success: true,
-      data: {
-        isAvailable: professional.isAvailable || false,
-        currentLocation: professional.currentLocation || null,
-        lastUpdated: professional.updatedAt
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ [PROFESSIONALS-AVAILABILITY] Error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get availability status',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
-  }
-});
+  });
+  
 
 module.exports = router;
