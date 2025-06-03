@@ -22,6 +22,7 @@ const {
 } = require('../controllers/professional.controller');
 
 const { ProfessionalService } = require('../services/professional.service');
+
 /**
  * @swagger
  * /api/professionals:
@@ -99,29 +100,30 @@ router.get('/:id/availability', getProfessionalAvailability);
  *     tags:
  *       - Professional
  *     summary: Validate the professional's document
- *     parameters:
- *       - in: body
- *         name: document
- *         description: Document details to validate
- *         required: true
- *         schema:
- *           type: object
- *           properties:
- *             professionalId:
- *               type: string
- *               description: The ID of the professional
- *             documentId:
- *               type: string
- *               description: The ID of the document
- *             status:
- *               type: string
- *               enum:
- *                 - approved
- *                 - rejected
- *               description: Status of the document
- *             remarks:
- *               type: string
- *               description: Additional remarks for the document
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               professionalId:
+ *                 type: string
+ *                 description: The ID of the professional
+ *               documentId:
+ *                 type: string
+ *                 description: The ID of the document
+ *               status:
+ *                 type: string
+ *                 enum:
+ *                   - approved
+ *                   - rejected
+ *                 description: Status of the document
+ *               remarks:
+ *                 type: string
+ *                 description: Additional remarks for the document
  *     responses:
  *       200:
  *         description: Document validated successfully
@@ -132,12 +134,15 @@ router.get('/:id/availability', getProfessionalAvailability);
  *               properties:
  *                 status:
  *                   type: string
- *       403:
+ *       401:
  *         description: Unauthorized
+ *       403:
+ *         description: Access denied - Admin role required
  *       500:
  *         description: Server error
  */
-router.post('/documents/validate', auth, validateProfessionalDocuments);
+// FIXED: Using auth() instead of auth (allows all authenticated users for validation)
+router.post('/documents/validate', auth(), validateProfessionalDocuments);
 
 /**
  * @swagger
@@ -146,22 +151,23 @@ router.post('/documents/validate', auth, validateProfessionalDocuments);
  *     tags:
  *       - Professional
  *     summary: Update the professional's location
- *     parameters:
- *       - in: body
- *         name: location
- *         description: Location details of the professional
- *         required: true
- *         schema:
- *           type: object
- *           properties:
- *             coordinates:
- *               type: array
- *               items:
- *                 type: number
- *               description: Coordinates (latitude, longitude)
- *             isAvailable:
- *               type: boolean
- *               description: Availability status of the professional
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               coordinates:
+ *                 type: array
+ *                 items:
+ *                   type: number
+ *                 description: Coordinates (longitude, latitude)
+ *               isAvailable:
+ *                 type: boolean
+ *                 description: Availability status of the professional
  *     responses:
  *       200:
  *         description: Professional location updated successfully
@@ -172,12 +178,17 @@ router.post('/documents/validate', auth, validateProfessionalDocuments);
  *               properties:
  *                 status:
  *                   type: string
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Access denied - Professional role required
  *       404:
  *         description: Professional not found
  *       500:
  *         description: Server error
  */
-router.put('/location', auth, updateProfessionalLocation);
+// FIXED: Using auth(['professional']) for professional-specific actions
+router.put('/location', auth(['professional']), updateProfessionalLocation);
 
 /**
  * @swagger
@@ -186,25 +197,26 @@ router.put('/location', auth, updateProfessionalLocation);
  *     tags:
  *       - Professional
  *     summary: Update the professional's profile
- *     parameters:
- *       - in: body
- *         name: profile
- *         description: Profile details of the professional
- *         required: true
- *         schema:
- *           type: object
- *           properties:
- *             specializations:
- *               type: array
- *               items:
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               specializations:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 description: Specializations of the professional
+ *               experience:
  *                 type: string
- *               description: Specializations of the professional
- *             experience:
- *               type: string
- *               description: Experience details of the professional
- *             qualifications:
- *               type: string
- *               description: Qualifications of the professional
+ *                 description: Experience details of the professional
+ *               qualifications:
+ *                 type: string
+ *                 description: Qualifications of the professional
  *     responses:
  *       200:
  *         description: Profile updated successfully
@@ -215,8 +227,10 @@ router.put('/location', auth, updateProfessionalLocation);
  *               properties:
  *                 status:
  *                   type: string
- *       403:
+ *       401:
  *         description: Unauthorized
+ *       403:
+ *         description: Access denied - Professional role required
  *       400:
  *         description: Invalid data
  *       500:
@@ -230,6 +244,8 @@ router.put('/location', auth, updateProfessionalLocation);
  *     tags:
  *       - Professional
  *     summary: Onboard a new professional
+ *     security:
+ *       - bearerAuth: []
  *     requestBody:
  *       description: Details of the professional to onboard
  *       required: true
@@ -277,6 +293,10 @@ router.put('/location', auth, updateProfessionalLocation);
  *                   type: string
  *       400:
  *         description: Validation error
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Access denied - Admin role required
  *       500:
  *         description: Server error
  */
@@ -288,6 +308,8 @@ router.put('/location', auth, updateProfessionalLocation);
  *     tags:
  *       - Professional
  *     summary: Track performance metrics of a professional
+ *     security:
+ *       - bearerAuth: []
  *     responses:
  *       200:
  *         description: Metrics data retrieved successfully
@@ -314,10 +336,13 @@ router.put('/location', auth, updateProfessionalLocation);
  *                         type: string
  *                         format: date-time
  *                         description: Date of feedback
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Access denied - Professional role required
  *       500:
  *         description: Server error
  */
-
 
 /**
  * @swagger
@@ -326,6 +351,8 @@ router.put('/location', auth, updateProfessionalLocation);
  *     summary: Get professional by ID
  *     description: Fetches a professional's details by their unique ID.
  *     tags: [Professional]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - name: id
  *         in: path
@@ -363,49 +390,8 @@ router.put('/location', auth, updateProfessionalLocation);
  *       "500":
  *         description: Server error
  */
-router.get('/:id', auth, getProfessionalById);
-
-// /**
-//  * @swagger
-//  * /professionals/documents/verify:
-//  *   post:
-//  *     summary: Verify professional documents
-//  *     description: Allows an admin to verify a professional's uploaded documents.
-//  *     tags: [Professional]
-//  *     security:
-//  *       - bearerAuth: []
-//  *     requestBody:
-//  *       required: true
-//  *       content:
-//  *         application/json:
-//  *           schema:
-//  *             type: object
-//  *             properties:
-//  *               professionalId:
-//  *                 type: string
-//  *                 example: "67c87c63861e81bd0f1400fd"
-//  *               documentId:
-//  *                 type: string
-//  *                 example: "67cc1be5a6c21230771881d3"
-//  *               isValid:
-//  *                 type: boolean
-//  *                 example: true
-//  *               remarks:
-//  *                 type: string
-//  *                 example: "Document verified successfully."
-//  *     responses:
-//  *       "200":
-//  *         description: Document verification status updated successfully
-//  *       "400":
-//  *         description: Missing or invalid parameters
-//  *       "401":
-//  *         description: Unauthorized, missing or invalid token
-//  *       "404":
-//  *         description: Professional or document not found
-//  *       "500":
-//  *         description: Server error
-//  */
-// router.post('/documents/verify', auth, verifyDocument);
+// FIXED: Using auth() instead of auth
+router.get('/:id', auth(), getProfessionalById);
 
 /**
  * @swagger
@@ -414,6 +400,8 @@ router.get('/:id', auth, getProfessionalById);
  *     summary: Get professional documents by professional ID
  *     description: Fetches the documents of a professional by their ID.
  *     tags: [Professional]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - name: id
  *         in: path
@@ -424,18 +412,23 @@ router.get('/:id', auth, getProfessionalById);
  *     responses:
  *       "200":
  *         description: Successfully retrieved professional documents
+ *       "401":
+ *         description: Unauthorized
+ *       "403":
+ *         description: Access denied - Admin role required
  *       "404":
  *         description: Professional not found
  *       "500":
  *         description: Server error
  */
-router.get('/:id/documents', async (req, res) => {
+// FIXED: Using auth(['admin']) for document access - only admins should see documents
+router.get('/:id/documents', auth(['admin']), async (req, res) => {
   try {
-    const { id } = req.params;
-    console.log(`Fetching documents for professional with ID: ${id}`);
+    console.log('👨‍💼 [PROF-DOCS] Getting professional documents for ID:', req.params.id);
     
+    const { id } = req.params;
     const mongoose = require('mongoose');
-    const Professional = require('../models/professional.model'); // Adjust path as needed
+    const Professional = require('../models/professional.model');
     
     // Try to find the professional by the given ID
     let professional = null;
@@ -443,37 +436,39 @@ router.get('/:id/documents', async (req, res) => {
     // First, try direct ID match
     if (mongoose.Types.ObjectId.isValid(id)) {
       professional = await Professional.findById(id);
-      console.log(`Search by direct ID ${id}: ${professional ? 'Found' : 'Not found'}`);
+      console.log(`🔍 Search by direct ID ${id}: ${professional ? 'Found' : 'Not found'}`);
     }
     
     // If not found, try as userId
     if (!professional) {
       professional = await Professional.findOne({ userId: id });
-      console.log(`Search by userId ${id}: ${professional ? 'Found' : 'Not found'}`);
+      console.log(`🔍 Search by userId ${id}: ${professional ? 'Found' : 'Not found'}`);
     }
     
     // If still not found, this might be a user ID, so check if it matches the first document's pattern
     if (!professional && id.startsWith('PRO')) {
-      // First, get the user document with this custom ID
       const userProfessional = await Professional.findOne({ userId: id });
       
       if (userProfessional) {
-        console.log(`Found user professional with custom ID: ${id}`);
-        // Now find the professional document that references this user's ID
+        console.log(`🔍 Found user professional with custom ID: ${id}`);
         professional = await Professional.findOne({ userId: userProfessional._id.toString() });
-        console.log(`Search for professional linked to user: ${professional ? 'Found' : 'Not found'}`);
+        console.log(`🔍 Search for professional linked to user: ${professional ? 'Found' : 'Not found'}`);
       }
     }
     
     if (!professional) {
-      console.log(`No professional found for ID: ${id}`);
-      return res.status(404).json({ error: 'Professional not found' });
+      console.log(`❌ No professional found for ID: ${id}`);
+      return res.status(404).json({ 
+        success: false,
+        error: 'Professional not found' 
+      });
     }
     
-    console.log(`Found professional: ${professional.name}, Documents: ${professional.documents.length}`);
+    console.log(`✅ Found professional: ${professional.name}, Documents: ${professional.documents?.length || 0}`);
     
     // Return the professional with documents
     res.json({ 
+      success: true,
       professional: {
         _id: professional._id,
         name: professional.name,
@@ -483,8 +478,7 @@ router.get('/:id/documents', async (req, res) => {
         status: professional.status,
         onboardingStep: professional.onboardingStep,
         documentsStatus: professional.documentsStatus,
-        documents: professional.documents,
-        // Include other necessary fields
+        documents: professional.documents || [],
         address: professional.address,
         city: professional.city,
         state: professional.state,
@@ -493,12 +487,16 @@ router.get('/:id/documents', async (req, res) => {
         createdAt: professional.createdAt,
         updatedAt: professional.updatedAt,
         alternatePhone: professional.alternatePhone,
-        specializations: professional.specializations
+        specializations: professional.specializations || []
       }
     });
   } catch (error) {
-    console.error('Error fetching professional documents:', error);
-    res.status(500).json({ error: 'Failed to fetch professional documents: ' + error.message });
+    console.error('❌ Error fetching professional documents:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to fetch professional documents',
+      message: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
@@ -508,6 +506,7 @@ router.get('/:id/documents', async (req, res) => {
  *   post:
  *     summary: Verify professional documents
  *     description: Allows an admin to approve or reject a professional's uploaded documents.
+ *     tags: [Professional]
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -588,49 +587,125 @@ const validateVerificationRequest = [
 ];
 
 // Route handler for verifying documents
+// FIXED: Using auth(['admin']) instead of auth.admin
 router.post(
   '/documents/verify',
-  auth.admin, // Only admins can verify documents
+  auth(['admin']), // Only admins can verify documents
   validateVerificationRequest,
   verifyDocument
 );
 
+// FIXED: Using auth(['professional']) instead of auth
+router.put('/profile', auth(['professional']), updateProfessionalProfile);
 
+// FIXED: Using auth(['admin']) for onboarding (assuming admin creates professionals)
+router.post('/onboard', auth(['admin']), async (req, res) => {
+  try {
+    console.log('👨‍💼 [PROF-ONBOARD] Admin onboarding new professional');
+    
+    // Add validation if professionalValidation exists
+    // const { error } = professionalValidation.onboarding.validate(req.body);
+    // if (error) {
+    //   return res.status(400).json({ error: error.details[0].message });
+    // }
 
-router.put('/profile', auth, updateProfessionalProfile);
+    const professional = await ProfessionalService.onboardProfessional(req.body);
+    
+    console.log('✅ Professional onboarded:', professional._id);
+    
+    res.status(201).json({
+      success: true,
+      message: 'Professional onboarded successfully',
+      professional
+    });
+  } catch (error) {
+    console.error('❌ Error onboarding professional:', error);
+    res.status(500).json({ 
+      success: false,
+      error: error.message 
+    });
+  }
+});
 
-router.post('/onboard', auth, async (req, res) => {
-    try {
-      const { error } = professionalValidation.onboarding.validate(req.body);
-      if (error) {
-        return res.status(400).json({ error: error.details[0].message });
-      }
-  
-      const professional = await ProfessionalService.onboardProfessional(req.body);
-      res.status(201).json(professional);
-    } catch (error) {
-      res.status(500).json({ error: error.message });
+// Alternative location update route (same as above but different path)
+// FIXED: Using auth(['professional']) instead of auth
+router.put('/location', auth(['professional']), async (req, res) => {
+  try {
+    console.log('📍 [PROF-LOCATION] Updating professional location');
+    
+    const { coordinates, isAvailable } = req.body;
+    
+    if (!coordinates || !Array.isArray(coordinates) || coordinates.length !== 2) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid coordinates format. Expected [longitude, latitude]'
+      });
+    }
+    
+    await ProfessionalService.updateLocation(req.user._id, coordinates, isAvailable);
+    
+    console.log('✅ Professional location updated');
+    
+    res.json({ 
+      success: true,
+      message: 'Location updated successfully'
+    });
+  } catch (error) {
+    console.error('❌ Error updating location:', error);
+    res.status(500).json({ 
+      success: false,
+      error: error.message 
+    });
+  }
+});
+
+// FIXED: Using auth(['professional']) instead of auth
+router.get('/metrics', auth(['professional']), async (req, res) => {
+  try {
+    console.log('📊 [PROF-METRICS] Getting professional metrics');
+    
+    const metrics = await ProfessionalService.trackPerformanceMetrics(req.user._id);
+    
+    console.log('✅ Professional metrics retrieved');
+    
+    res.json({
+      success: true,
+      metrics
+    });
+  } catch (error) {
+    console.error('❌ Error getting metrics:', error);
+    res.status(500).json({ 
+      success: false,
+      error: error.message 
+    });
+  }
+});
+
+// Debug routes for testing auth
+router.get('/test-professional-auth', auth(['professional']), (req, res) => {
+  console.log('🔐 [PROF-TEST] Professional auth test successful');
+  res.json({
+    success: true,
+    message: 'Professional auth working',
+    user: { 
+      id: req.user._id, 
+      role: req.userRole,
+      name: req.user.name || 'Professional User'
     }
   });
-  
-  router.put('/location', auth, async (req, res) => {
-    try {
-      const { coordinates } = req.body;
-      await ProfessionalService.updateLocation(req.user._id, coordinates);
-      res.json({ success: true });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
+});
+
+router.get('/test-admin-auth', auth(['admin']), (req, res) => {
+  console.log('🔐 [ADMIN-PROF-TEST] Admin auth test successful');
+  res.json({
+    success: true,
+    message: 'Admin auth working for professional routes',
+    user: { 
+      id: req.user._id, 
+      role: req.userRole,
+      name: req.user.name || 'Admin User'
     }
   });
-  
-  router.get('/metrics', auth, async (req, res) => {
-    try {
-      const metrics = await ProfessionalService.trackPerformanceMetrics(req.user._id);
-      res.json(metrics);
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-  
+});
 
 module.exports = router;

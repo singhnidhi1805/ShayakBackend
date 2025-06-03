@@ -242,44 +242,71 @@ class BookingService {
   }
   
   /**
-   * Start a service
-   * @param {string} bookingId - Booking ID
-   * @param {string} professionalId - Professional ID
-   * @returns {Promise<Object>} Updated booking
-   */
-  async startService(bookingId, professionalId) {
-    try {
-      console.log(`🚀 Starting service for booking ${bookingId}`);
-      
-      const booking = await Booking.findById(bookingId);
-      if (!booking) {
-        throw new Error('Booking not found');
-      }
-      
-      if (booking.status !== 'accepted') {
-        throw new Error(`Booking is ${booking.status}, not accepted`);
-      }
-      
-      if (booking.professional.toString() !== professionalId) {
-        throw new Error('Professional is not assigned to this booking');
-      }
-      
-      // Update booking status and tracking
-      booking.status = 'in_progress';
-      if (!booking.tracking) {
-        booking.tracking = {};
-      }
-      booking.tracking.startedAt = new Date();
-      
-      await booking.save();
-      
-      console.log(`✅ Service started for booking ${bookingId}`);
-      return booking;
-    } catch (error) {
-      console.error(`❌ Error starting service for booking ${bookingId}:`, error);
-      throw error;
+ * Start a service (FIXED VERSION)
+ * @param {string} bookingId - Booking ID
+ * @param {string} professionalId - Professional ID
+ * @returns {Promise<Object>} Updated booking
+ */
+async startService(bookingId, professionalId) {
+  try {
+    console.log(`🚀 Starting service for booking ${bookingId}`);
+    console.log(`👨‍🔧 Professional ID from request: ${professionalId}`);
+    
+    const booking = await Booking.findById(bookingId);
+    if (!booking) {
+      throw new Error('Booking not found');
     }
+    
+    console.log(`📊 Booking status: ${booking.status}`);
+    console.log(`👨‍🔧 Booking professional: ${booking.professional}`);
+    console.log(`👨‍🔧 Professional type: ${typeof booking.professional}`);
+    console.log(`👨‍🔧 Request professional: ${professionalId}`);
+    console.log(`👨‍🔧 Request professional type: ${typeof professionalId}`);
+    
+    if (booking.status !== 'accepted') {
+      throw new Error(`Booking is ${booking.status}, not accepted`);
+    }
+    
+    // Check if professional is assigned
+    if (!booking.professional) {
+      throw new Error('No professional assigned to this booking');
+    }
+    
+    // FIXED: More robust professional ID comparison
+    const bookingProfessionalId = booking.professional.toString();
+    const requestProfessionalId = professionalId.toString();
+    
+    console.log(`🔍 Comparing IDs:`);
+    console.log(`   - Booking professional (string): "${bookingProfessionalId}"`);
+    console.log(`   - Request professional (string): "${requestProfessionalId}"`);
+    console.log(`   - Are they equal? ${bookingProfessionalId === requestProfessionalId}`);
+    
+    if (bookingProfessionalId !== requestProfessionalId) {
+      console.log(`❌ Professional mismatch:`);
+      console.log(`   - Expected: ${bookingProfessionalId}`);
+      console.log(`   - Got: ${requestProfessionalId}`);
+      throw new Error('Professional is not assigned to this booking');
+    }
+    
+    console.log(`✅ Professional verification passed`);
+    
+    // Update booking status and tracking
+    booking.status = 'in_progress';
+    if (!booking.tracking) {
+      booking.tracking = {};
+    }
+    booking.tracking.startedAt = new Date();
+    
+    console.log(`💾 Saving booking with new status: ${booking.status}`);
+    await booking.save();
+    
+    console.log(`✅ Service started for booking ${bookingId}`);
+    return booking;
+  } catch (error) {
+    console.error(`❌ Error starting service for booking ${bookingId}:`, error);
+    throw error;
   }
+}
   
   /**
    * Complete a service
@@ -304,7 +331,7 @@ class BookingService {
         throw new Error(`Booking is ${booking.status}, not in_progress`);
       }
       
-      if (booking.professional.toString() !== professionalId) {
+      if (!booking.professional.equals(professionalId)) {
         throw new Error('Professional is not assigned to this booking');
       }
       
@@ -366,7 +393,7 @@ class BookingService {
       if (userRole === 'user' && booking.user.toString() !== userId) {
         throw new Error('Not authorized to cancel this booking');
       }
-      if (userRole === 'professional' && (!booking.professional || booking.professional.toString() !== userId)) {
+      if (userRole === 'professional' && (!booking.professional || !booking.professional.equals(userId))) {
         throw new Error('Not authorized to cancel this booking');
       }
       
@@ -467,7 +494,7 @@ class BookingService {
         throw new Error(`Cannot update ETA for booking with status ${booking.status}`);
       }
       
-      if (booking.professional.toString() !== professionalId) {
+      if (!booking.professional.equals(professionalId)) {
         throw new Error('Professional is not assigned to this booking');
       }
       
@@ -497,44 +524,59 @@ class BookingService {
   }
   
   /**
-   * Professional arrived at location
-   * @param {string} bookingId - Booking ID
-   * @param {string} professionalId - Professional ID
-   * @returns {Promise<Object>} Updated booking
-   */
-  async professionalArrived(bookingId, professionalId) {
-    try {
-      console.log(`📍 Professional arrived at booking ${bookingId}`);
-      
-      const booking = await Booking.findById(bookingId);
-      if (!booking) {
-        throw new Error('Booking not found');
-      }
-      
-      if (booking.status !== 'in_progress') {
-        throw new Error(`Booking is ${booking.status}, not in_progress`);
-      }
-      
-      if (booking.professional.toString() !== professionalId) {
-        throw new Error('Professional is not assigned to this booking');
-      }
-      
-      // Update tracking info
-      if (!booking.tracking) {
-        booking.tracking = {};
-      }
-      
-      booking.tracking.arrivedAt = new Date();
-      booking.tracking.eta = 0;
-      await booking.save();
-      
-      console.log(`✅ Professional arrived for booking ${bookingId}`);
-      return booking;
-    } catch (error) {
-      console.error(`❌ Error marking professional arrived for booking ${bookingId}:`, error);
-      throw error;
+ * Professional arrived at location (FIXED VERSION)
+ * @param {string} bookingId - Booking ID
+ * @param {string} professionalId - Professional ID
+ * @returns {Promise<Object>} Updated booking
+ */
+async professionalArrived(bookingId, professionalId) {
+  try {
+    console.log(`📍 Professional arrived at booking ${bookingId}`);
+    console.log(`👨‍🔧 Professional ID: ${professionalId}`);
+    
+    const booking = await Booking.findById(bookingId);
+    if (!booking) {
+      throw new Error('Booking not found');
     }
+    
+    console.log(`📊 Booking status: ${booking.status}`);
+    console.log(`👨‍🔧 Booking professional: ${booking.professional}`);
+    
+    if (booking.status !== 'in_progress') {
+      throw new Error(`Booking is ${booking.status}, not in_progress`);
+    }
+    
+    // Check if professional is assigned
+    if (!booking.professional) {
+      throw new Error('No professional assigned to this booking');
+    }
+    
+    // FIXED: Use mongoose equals method instead of string comparison
+    if (!booking.professional.equals(professionalId)) {
+      console.log(`❌ Professional mismatch:`);
+      console.log(`   - Expected: ${booking.professional}`);
+      console.log(`   - Got: ${professionalId}`);
+      throw new Error('Professional is not assigned to this booking');
+    }
+    
+    console.log(`✅ Professional verification passed`);
+    
+    // Update tracking info
+    if (!booking.tracking) {
+      booking.tracking = {};
+    }
+    
+    booking.tracking.arrivedAt = new Date();
+    booking.tracking.eta = 0;
+    await booking.save();
+    
+    console.log(`✅ Professional arrived for booking ${bookingId}`);
+    return booking;
+  } catch (error) {
+    console.error(`❌ Error marking professional arrived for booking ${bookingId}:`, error);
+    throw error;
   }
+}
   
   /**
    * Rate a booking

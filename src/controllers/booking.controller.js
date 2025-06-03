@@ -322,6 +322,129 @@ async getActiveBooking(req, res) {
   }
 }
 
+/**
+ * Get available bookings for professionals to accept
+ */
+async getAvailableBookings(req, res) {
+  try {
+    console.log('🔍 [AVAILABLE-BOOKINGS] Getting available bookings for professional:', req.user._id);
+    
+    const { specialization, radius = 50 } = req.query;
+    
+    // Get professional details to check specializations and location
+    const professional = await Professional.findById(req.user._id).lean();
+    if (!professional) {
+      return res.status(404).json({
+        success: false,
+        message: 'Professional not found'
+      });
+    }
+
+    console.log('👨‍🔧 [AVAILABLE-BOOKINGS] Professional specializations:', professional.specializations);
+    console.log('📍 [AVAILABLE-BOOKINGS] Professional location:', professional.currentLocation);
+
+    // Build query for available bookings
+    let query = {
+      status: 'pending',
+      professional: { $exists: false } // No professional assigned yet
+    };
+
+    // If specialization filter is provided, use it
+    // Otherwise, filter by professional's specializations
+    const specializationsToMatch = specialization 
+      ? [specialization] 
+      : professional.specializations || [];
+
+    if (specializationsToMatch.length > 0) {
+      // Get services that match the specializations
+      const matchingServices = await Service.find({
+        category: { $in: specializationsToMatch }
+      }).select('_id').lean();
+      
+      if (matchingServices.length > 0) {
+        query.service = { $in: matchingServices.map(s => s._id) };
+      } else {
+        // No matching services found
+        return res.json({
+          success: true,
+          bookings: []
+        });
+      }
+    }
+
+    console.log('🔍 [AVAILABLE-BOOKINGS] Query:', JSON.stringify(query));
+
+    // Find available bookings
+    let availableBookings = await Booking.find(query)
+      .populate('service', 'name category pricing estimatedDuration')
+      .populate('user', 'name phone')
+      .sort({ isEmergency: -1, createdAt: 1 }) // Emergency bookings first, then FIFO
+      .lean();
+
+    console.log(`📋 [AVAILABLE-BOOKINGS] Found ${availableBookings.length} potential bookings`);
+
+    // Filter by location if professional has location and radius is specified
+    if (professional.currentLocation && professional.currentLocation.coordinates) {
+      const [profLng, profLat] = professional.currentLocation.coordinates;
+      
+      availableBookings = availableBookings.filter(booking => {
+        if (!booking.location || !booking.location.coordinates) {
+          return true; // Include if no location data
+        }
+        
+        const [bookingLng, bookingLat] = booking.location.coordinates;
+        const distance = this.calculateDistance(profLat, profLng, bookingLat, bookingLng);
+        
+        console.log(`📍 [AVAILABLE-BOOKINGS] Booking ${booking._id} distance: ${distance.toFixed(2)}km`);
+        return distance <= radius;
+      });
+    }
+
+    console.log(`✅ [AVAILABLE-BOOKINGS] Final count after location filter: ${availableBookings.length}`);
+
+    // Format response
+    const formattedBookings = availableBookings.map(booking => ({
+      _id: booking._id,
+      service: booking.service,
+      user: booking.user,
+      scheduledDate: booking.scheduledDate,
+      location: booking.location,
+      status: booking.status,
+      totalAmount: booking.totalAmount,
+      verificationCode: booking.verificationCode,
+      isEmergency: booking.isEmergency,
+      tracking: booking.tracking || {},
+      createdAt: booking.createdAt
+    }));
+
+    res.json({
+      success: true,
+      bookings: formattedBookings
+    });
+
+  } catch (error) {
+    console.error('❌ [AVAILABLE-BOOKINGS] Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get available bookings'
+    });
+  }
+}
+
+/**
+ * Calculate distance between two points using Haversine formula
+ */
+calculateDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371; // Earth's radius in kilometers
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon/2) * Math.sin(dLon/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
+}
+
   /**
    * Get booking history
    */

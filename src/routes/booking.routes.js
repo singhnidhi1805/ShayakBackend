@@ -845,6 +845,46 @@ router.post('/:bookingId/eta', auth(['professional']), BookingController.updateE
  *         description: Internal server error
  */
 router.post('/emergency', auth(), BookingController.createEmergencyBooking.bind(BookingController));
+// Add this new route to your booking.routes.js file
 
+/**
+ * @swagger
+ * /api/bookings/available:
+ *   get:
+ *     summary: Get available bookings for professionals to accept
+ *     tags: [Bookings]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: specialization
+ *         schema:
+ *           type: string
+ *         description: Filter by specialization
+ *       - in: query
+ *         name: radius
+ *         schema:
+ *           type: number
+ *           default: 50
+ *         description: Search radius in kilometers
+ *     responses:
+ *       200:
+ *         description: List of available bookings
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 bookings:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Booking'
+ *       500:
+ *         description: Internal server error
+ */
+router.get('/available', auth(['professional']), BookingController.getAvailableBookings.bind(BookingController));
 
 module.exports = router;
