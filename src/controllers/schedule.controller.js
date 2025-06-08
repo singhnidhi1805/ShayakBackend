@@ -1,30 +1,60 @@
-// src/controllers/schedule.controller.js - COMPLETE WORKING VERSION
+// src/controllers/schedule.controller.js - FIXED DATE HANDLING VERSION
 const Schedule = require('../models/schedule.model');
 const Booking = require('../models/booking.model');
 const Professional = require('../models/professional.model');
 
-// Helper function to get or create schedule (fallback if static method doesn't work)
-async function getOrCreateSchedule(professionalId, date) {
-  console.log('📅 [SCHEDULE-HELPER] Getting or creating schedule for:', { professionalId, date });
+// Helper function to properly handle dates
+function createDateRange(dateString) {
+  console.log('🗓️ [DATE-HELPER] Creating date range for:', dateString);
   
-  const startOfDay = new Date(date);
-  startOfDay.setHours(0, 0, 0, 0);
+  // Parse the input date string (YYYY-MM-DD)
+  const inputDate = new Date(dateString + 'T00:00:00.000Z');
+  
+  // Create start of day in UTC
+  const startOfDay = new Date(inputDate);
+  startOfDay.setUTCHours(0, 0, 0, 0);
+  
+  // Create end of day in UTC
+  const endOfDay = new Date(inputDate);
+  endOfDay.setUTCHours(23, 59, 59, 999);
+  
+  console.log('🗓️ [DATE-HELPER] Date range:', {
+    input: dateString,
+    startOfDay: startOfDay.toISOString(),
+    endOfDay: endOfDay.toISOString()
+  });
+  
+  return { startOfDay, endOfDay };
+}
+
+// Helper function to get or create schedule with proper date handling
+async function getOrCreateScheduleWithDateFix(professionalId, dateString) {
+  console.log('📅 [SCHEDULE-HELPER] Getting/creating schedule for:', { professionalId, dateString });
+  
+  const { startOfDay } = createDateRange(dateString);
   
   let schedule = await Schedule.findOne({
     professional: professionalId,
-    date: startOfDay
+    date: {
+      $gte: startOfDay,
+      $lt: new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000)
+    }
   });
   
   if (!schedule) {
     console.log('📅 [SCHEDULE-HELPER] Creating new schedule for date:', startOfDay);
+    
+    const dayOfWeek = startOfDay.getUTCDay();
+    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6; // Sunday or Saturday
+    
     schedule = new Schedule({
       professional: professionalId,
       date: startOfDay,
-      dayOfWeek: startOfDay.getDay(),
+      dayOfWeek: dayOfWeek,
       workingHours: {
         startTime: "09:00",
         endTime: "18:00",
-        isWorkingDay: startOfDay.getDay() !== 0 && startOfDay.getDay() !== 6 // Not Sunday or Saturday
+        isWorkingDay: !isWeekend // Working day if not weekend
       }
     });
     await schedule.save();
@@ -52,34 +82,29 @@ class ScheduleController {
         });
       }
       
-      const requestedDate = new Date(date);
-      if (isNaN(requestedDate.getTime())) {
+      // Validate date format (YYYY-MM-DD)
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(date)) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid date format'
+          message: 'Invalid date format. Use YYYY-MM-DD'
         });
       }
       
-      // Get or create schedule for the date using helper function
+      // Get or create schedule for the date using fixed helper function
       let schedule;
       try {
-        // Try to use the static method first
-        if (Schedule.getOrCreateSchedule && typeof Schedule.getOrCreateSchedule === 'function') {
-          schedule = await Schedule.getOrCreateSchedule(professionalId, requestedDate);
-        } else {
-          // Fallback to helper function
-          schedule = await getOrCreateSchedule(professionalId, requestedDate);
-        }
+        schedule = await getOrCreateScheduleWithDateFix(professionalId, date);
       } catch (error) {
-        console.log('⚠️ [SCHEDULE] Static method failed, using fallback:', error.message);
-        schedule = await getOrCreateSchedule(professionalId, requestedDate);
+        console.error('❌ [SCHEDULE] Error getting/creating schedule:', error);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to retrieve schedule'
+        });
       }
       
       // Get actual bookings for this date
-      const startOfDay = new Date(requestedDate);
-      startOfDay.setHours(0, 0, 0, 0);
-      const endOfDay = new Date(requestedDate);
-      endOfDay.setHours(23, 59, 59, 999);
+      const { startOfDay, endOfDay } = createDateRange(date);
       
       let bookings = [];
       try {
@@ -92,8 +117,7 @@ class ScheduleController {
           status: { $nin: ['cancelled'] }
         }).populate('user', 'name phone').sort({ scheduledDate: 1 });
       } catch (bookingError) {
-        console.log('⚠️ [SCHEDULE] Booking model not found or error:', bookingError.message);
-        // Continue with empty bookings if Booking model doesn't exist
+        console.log('⚠️ [SCHEDULE] Booking model error (continuing with empty bookings):', bookingError.message);
         bookings = [];
       }
       
@@ -111,16 +135,16 @@ class ScheduleController {
         totalAmount: booking.totalAmount || 0
       }));
       
-      // Get marked dates for calendar (next 30 days)
-      const today = new Date();
-      const thirtyDaysLater = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+      // Get marked dates for calendar (next 30 days from the requested date)
+      const baseDate = new Date(date + 'T00:00:00.000Z');
+      const thirtyDaysLater = new Date(baseDate.getTime() + 30 * 24 * 60 * 60 * 1000);
       
       let upcomingBookings = [];
       try {
         upcomingBookings = await Booking.find({
           professional: professionalId,
           scheduledDate: {
-            $gte: today,
+            $gte: baseDate,
             $lte: thirtyDaysLater
           },
           status: { $nin: ['cancelled'] }
@@ -149,8 +173,7 @@ class ScheduleController {
       
       // Add next 30 days to marked dates
       for (let i = 0; i <= 30; i++) {
-        const currentDate = new Date(today);
-        currentDate.setDate(today.getDate() + i);
+        const currentDate = new Date(baseDate.getTime() + i * 24 * 60 * 60 * 1000);
         const dateKey = currentDate.toISOString().split('T')[0];
         
         if (!dateMap.has(dateKey)) {
@@ -165,12 +188,20 @@ class ScheduleController {
       }
       
       console.log('✅ [SCHEDULE] Schedule retrieved successfully');
+      console.log('📊 [SCHEDULE] Schedule data:', {
+        date: schedule.date,
+        dayOfWeek: schedule.dayOfWeek,
+        isWorkingDay: schedule.workingHours?.isWorkingDay,
+        isHoliday: schedule.isHoliday,
+        blockedTimesCount: schedule.blockedTimes?.length || 0,
+        appointmentsCount: appointments.length
+      });
       
       res.json({
         success: true,
         data: {
           schedule: {
-            date: requestedDate,
+            date: new Date(date + 'T00:00:00.000Z'), // Return the requested date consistently
             isWorkingDay: schedule.workingHours?.isWorkingDay ?? true,
             workingHours: schedule.workingHours || {
               startTime: "09:00",
@@ -211,15 +242,17 @@ class ScheduleController {
         });
       }
       
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      
-      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      // Validate date formats
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid date format'
+          message: 'Invalid date format. Use YYYY-MM-DD'
         });
       }
+      
+      const { startOfDay: start } = createDateRange(startDate);
+      const { endOfDay: end } = createDateRange(endDate);
       
       let bookings = [];
       try {
@@ -285,24 +318,25 @@ class ScheduleController {
         });
       }
       
-      const requestedDate = new Date(date);
-      if (isNaN(requestedDate.getTime())) {
+      // Validate date format
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(date)) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid date format'
+          message: 'Invalid date format. Use YYYY-MM-DD'
         });
       }
       
       // Get or create schedule for the date
       let schedule;
       try {
-        if (Schedule.getOrCreateSchedule && typeof Schedule.getOrCreateSchedule === 'function') {
-          schedule = await Schedule.getOrCreateSchedule(professionalId, requestedDate);
-        } else {
-          schedule = await getOrCreateSchedule(professionalId, requestedDate);
-        }
+        schedule = await getOrCreateScheduleWithDateFix(professionalId, date);
       } catch (error) {
-        schedule = await getOrCreateSchedule(professionalId, requestedDate);
+        console.error('❌ [BLOCK-TIME] Error getting/creating schedule:', error);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to create schedule'
+        });
       }
       
       // Add the blocked time
@@ -322,7 +356,7 @@ class ScheduleController {
         message: 'Time blocked successfully',
         data: {
           schedule: {
-            date: requestedDate,
+            date: new Date(date + 'T00:00:00.000Z'),
             blockedTimes: schedule.blockedTimes
           }
         }
@@ -500,24 +534,25 @@ class ScheduleController {
         });
       }
       
-      const requestedDate = new Date(date);
-      if (isNaN(requestedDate.getTime())) {
+      // Validate date format
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(date)) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid date format'
+          message: 'Invalid date format. Use YYYY-MM-DD'
         });
       }
       
       // Get or create schedule for the date
       let schedule;
       try {
-        if (Schedule.getOrCreateSchedule && typeof Schedule.getOrCreateSchedule === 'function') {
-          schedule = await Schedule.getOrCreateSchedule(professionalId, requestedDate);
-        } else {
-          schedule = await getOrCreateSchedule(professionalId, requestedDate);
-        }
+        schedule = await getOrCreateScheduleWithDateFix(professionalId, date);
       } catch (error) {
-        schedule = await getOrCreateSchedule(professionalId, requestedDate);
+        console.error('❌ [HOLIDAY] Error getting/creating schedule:', error);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to create schedule'
+        });
       }
       
       schedule.isHoliday = isHoliday !== undefined ? isHoliday : true;
@@ -537,7 +572,7 @@ class ScheduleController {
         message: `${schedule.isHoliday ? 'Holiday set' : 'Holiday removed'} successfully`,
         data: {
           schedule: {
-            date: requestedDate,
+            date: new Date(date + 'T00:00:00.000Z'),
             isHoliday: schedule.isHoliday,
             holidayReason: schedule.holidayReason
           }
@@ -574,7 +609,7 @@ class ScheduleController {
         data: {
           holidays: holidays.map(h => ({
             id: h._id,
-            date: h.date,
+            date: h.date.toISOString().split('T')[0], // Return as YYYY-MM-DD
             reason: h.holidayReason
           }))
         }
@@ -655,24 +690,25 @@ class ScheduleController {
         });
       }
       
-      const requestedDate = new Date(date);
-      if (isNaN(requestedDate.getTime())) {
+      // Validate date format
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(date)) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid date format'
+          message: 'Invalid date format. Use YYYY-MM-DD'
         });
       }
       
       // Get schedule for the date
       let schedule;
       try {
-        if (Schedule.getOrCreateSchedule && typeof Schedule.getOrCreateSchedule === 'function') {
-          schedule = await Schedule.getOrCreateSchedule(professionalId, requestedDate);
-        } else {
-          schedule = await getOrCreateSchedule(professionalId, requestedDate);
-        }
+        schedule = await getOrCreateScheduleWithDateFix(professionalId, date);
       } catch (error) {
-        schedule = await getOrCreateSchedule(professionalId, requestedDate);
+        console.error('❌ [CHECK-AVAILABILITY] Error getting schedule:', error);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to check availability'
+        });
       }
       
       // Check if it's a working day
@@ -720,10 +756,7 @@ class ScheduleController {
       // Check for existing bookings
       let hasConflict = false;
       try {
-        const startOfDay = new Date(requestedDate);
-        startOfDay.setHours(0, 0, 0, 0);
-        const endOfDay = new Date(requestedDate);
-        endOfDay.setHours(23, 59, 59, 999);
+        const { startOfDay, endOfDay } = createDateRange(date);
         
         const conflictingBookings = await Booking.find({
           professional: professionalId,
