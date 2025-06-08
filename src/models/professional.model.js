@@ -26,6 +26,7 @@ const professionalSchema = new mongoose.Schema({
   alternatePhone: { 
     type: String 
   },
+  
   address: { 
     type: String 
   },
@@ -121,7 +122,22 @@ const professionalSchema = new mongoose.Schema({
     unique: true, 
     sparse: true, // Only apply the unique constraint if the field exists (not null)
     index: true // Add index for faster lookup by employeeId
-  }
+  },
+  workingHours: {
+    startTime: {
+      type: String,
+      default: "09:00"
+    },
+    endTime: {
+      type: String,
+      default: "18:00"
+    },
+    isWorkingDay: {
+      type: Boolean,
+      default: true
+    }
+  },
+  
 }, { 
   timestamps: true 
 });

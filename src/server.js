@@ -16,6 +16,7 @@ const logger = require('./config/logger');
 const http = require('http');
 const socketService = require('./services/socket.service');
 const testRoutes = require('./routes/test.routes');
+const scheduleRoutes = require('./routes/schedule.routes');
 const app = express();
 const server = http.createServer(app);
 
@@ -40,6 +41,7 @@ app.use('/api', servicemanagement);
 app.use('/api/admin', adminRoutes);
 app.use('/api/support', supportRoutes);
 app.use('/api/test', testRoutes);
+app.use('/api/professional/schedule', scheduleRoutes);
 connectDB();
 
 setupSwagger(app);
