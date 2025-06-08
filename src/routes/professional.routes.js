@@ -306,44 +306,209 @@ router.post('/documents/validate', auth(), validateProfessionalDocuments);
  * @swagger
  * /api/professionals/metrics:
  *   get:
- *     tags:
- *       - Professional
- *     summary: Track performance metrics of a professional
+ *     summary: Get professional performance metrics
+ *     tags: [Professional]
  *     security:
  *       - bearerAuth: []
  *     responses:
  *       200:
  *         description: Metrics data retrieved successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 jobsCompleted:
- *                   type: number
- *                   description: Total jobs completed by the professional
- *                 ratings:
- *                   type: number
- *                   description: Average rating of the professional
- *                 feedbacks:
- *                   type: array
- *                   items:
- *                     type: object
- *                     properties:
- *                       feedback:
- *                         type: string
- *                         description: Customer feedback
- *                       date:
- *                         type: string
- *                         format: date-time
- *                         description: Date of feedback
- *       401:
- *         description: Unauthorized
- *       403:
- *         description: Access denied - Professional role required
+ *       404:
+ *         description: Professional not found
  *       500:
  *         description: Server error
  */
+router.get('/metrics', auth(['professional']), async (req, res) => {
+  try {
+    console.log('📊 [PROF-METRICS] Getting metrics for professional:', req.user._id);
+    
+    // Find the professional first
+    const professional = await Professional.findById(req.user._id);
+    
+    if (!professional) {
+      console.log('❌ [PROF-METRICS] Professional not found');
+      return res.status(404).json({
+        success: false,
+        message: 'Professional not found'
+      });
+    }
+
+    console.log('✅ [PROF-METRICS] Professional found:', professional.name);
+
+    // Get metrics from bookings - you'll need to import your Booking model
+    const Booking = require('../models/booking.model');
+    
+    // Get all completed bookings for this professional
+    const completedBookings = await Booking.find({
+      professional: req.user._id,
+      status: 'completed'
+    }).populate('rating');
+
+    // Get all bookings (for total count)
+    const totalBookings = await Booking.find({
+      professional: req.user._id
+    });
+
+    // Calculate metrics
+    const jobsCompleted = completedBookings.length;
+    const totalJobs = totalBookings.length;
+    
+    // Calculate average rating
+    const ratingsArray = completedBookings
+      .filter(booking => booking.rating && booking.rating.score)
+      .map(booking => booking.rating.score);
+    
+    const averageRating = ratingsArray.length > 0 
+      ? ratingsArray.reduce((sum, rating) => sum + rating, 0) / ratingsArray.length 
+      : 0;
+
+    // Get recent feedbacks (last 10)
+    const feedbacks = completedBookings
+      .filter(booking => booking.rating && booking.rating.review)
+      .slice(-10)
+      .map(booking => ({
+        feedback: booking.rating.review,
+        rating: booking.rating.score,
+        date: booking.rating.createdAt || booking.completedAt,
+        customerName: booking.user?.name || 'Customer'
+      }));
+
+    // Calculate earnings (if you have totalAmount field)
+    const totalEarnings = completedBookings.reduce((sum, booking) => {
+      return sum + (booking.totalAmount || 0);
+    }, 0);
+
+    // Calculate this month's metrics
+    const currentMonth = new Date();
+    currentMonth.setDate(1);
+    currentMonth.setHours(0, 0, 0, 0);
+    
+    const thisMonthBookings = completedBookings.filter(booking => 
+      booking.completedAt >= currentMonth
+    );
+    
+    const thisMonthEarnings = thisMonthBookings.reduce((sum, booking) => {
+      return sum + (booking.totalAmount || 0);
+    }, 0);
+
+    const metrics = {
+      jobsCompleted,
+      totalJobs,
+      ratings: parseFloat(averageRating.toFixed(1)),
+      totalRatings: ratingsArray.length,
+      feedbacks,
+      totalEarnings,
+      thisMonthEarnings,
+      thisMonthJobs: thisMonthBookings.length,
+      completionRate: totalJobs > 0 ? parseFloat(((jobsCompleted / totalJobs) * 100).toFixed(1)) : 0,
+      responseTime: '15 mins', // You can calculate this from booking acceptance times
+      profileCompleteness: calculateProfileCompleteness(professional),
+      availabilityStatus: professional.isAvailable || false,
+      lastActiveDate: professional.updatedAt,
+      joinedDate: professional.createdAt,
+      specializations: professional.specializations || [],
+      // Recent performance trends
+      trends: {
+        lastWeekJobs: getLastWeekJobs(completedBookings),
+        ratingTrend: getRatingTrend(completedBookings),
+        earningsTrend: getEarningsTrend(completedBookings)
+      }
+    };
+
+    console.log('✅ [PROF-METRICS] Metrics calculated successfully');
+    console.log('📊 [PROF-METRICS] Jobs completed:', jobsCompleted);
+    console.log('📊 [PROF-METRICS] Average rating:', averageRating);
+    console.log('📊 [PROF-METRICS] Total earnings:', totalEarnings);
+    
+    res.json({
+      success: true,
+      metrics
+    });
+
+  } catch (error) {
+    console.error('❌ [PROF-METRICS] Error getting metrics:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to get performance metrics',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+});
+
+// Helper functions for metrics calculation
+function calculateProfileCompleteness(professional) {
+  let completeness = 0;
+  const fields = [
+    'name', 'email', 'phone', 'specializations', 
+    'address', 'city', 'state', 'pincode'
+  ];
+  
+  fields.forEach(field => {
+    if (professional[field] && professional[field].length > 0) {
+      completeness += 1;
+    }
+  });
+  
+  // Check documents
+  if (professional.documents && professional.documents.length > 0) {
+    completeness += 1;
+  }
+  
+  return Math.round((completeness / (fields.length + 1)) * 100);
+}
+
+function getLastWeekJobs(completedBookings) {
+  const oneWeekAgo = new Date();
+  oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+  
+  return completedBookings.filter(booking => 
+    booking.completedAt >= oneWeekAgo
+  ).length;
+}
+
+function getRatingTrend(completedBookings) {
+  if (completedBookings.length < 2) return 0;
+  
+  // Get ratings from last 10 bookings vs previous 10 bookings
+  const recent = completedBookings.slice(-10);
+  const previous = completedBookings.slice(-20, -10);
+  
+  if (previous.length === 0) return 0;
+  
+  const recentAvg = recent
+    .filter(b => b.rating?.score)
+    .reduce((sum, b) => sum + b.rating.score, 0) / recent.filter(b => b.rating?.score).length;
+  
+  const previousAvg = previous
+    .filter(b => b.rating?.score)
+    .reduce((sum, b) => sum + b.rating.score, 0) / previous.filter(b => b.rating?.score).length;
+  
+  return parseFloat((recentAvg - previousAvg).toFixed(2));
+}
+
+function getEarningsTrend(completedBookings) {
+  const currentMonth = new Date();
+  currentMonth.setDate(1);
+  currentMonth.setHours(0, 0, 0, 0);
+  
+  const lastMonth = new Date(currentMonth);
+  lastMonth.setMonth(lastMonth.getMonth() - 1);
+  
+  const currentMonthEarnings = completedBookings
+    .filter(booking => booking.completedAt >= currentMonth)
+    .reduce((sum, booking) => sum + (booking.totalAmount || 0), 0);
+  
+  const lastMonthEarnings = completedBookings
+    .filter(booking => 
+      booking.completedAt >= lastMonth && booking.completedAt < currentMonth
+    )
+    .reduce((sum, booking) => sum + (booking.totalAmount || 0), 0);
+  
+  if (lastMonthEarnings === 0) return 0;
+  
+  const percentageChange = ((currentMonthEarnings - lastMonthEarnings) / lastMonthEarnings) * 100;
+  return parseFloat(percentageChange.toFixed(1));
+}
 
 /**
  * @swagger
@@ -661,26 +826,26 @@ router.post('/onboard', auth(['admin']), async (req, res) => {
 // });
 
 // FIXED: Using auth(['professional']) instead of auth
-router.get('/metrics', auth(['professional']), async (req, res) => {
-  try {
-    console.log('📊 [PROF-METRICS] Getting professional metrics');
+// router.get('/metrics', auth(['professional']), async (req, res) => {
+//   try {
+//     console.log('📊 [PROF-METRICS] Getting professional metrics');
     
-    const metrics = await ProfessionalService.trackPerformanceMetrics(req.user._id);
+//     const metrics = await ProfessionalService.trackPerformanceMetrics(req.user._id);
     
-    console.log('✅ Professional metrics retrieved');
+//     console.log('✅ Professional metrics retrieved');
     
-    res.json({
-      success: true,
-      metrics
-    });
-  } catch (error) {
-    console.error('❌ Error getting metrics:', error);
-    res.status(500).json({ 
-      success: false,
-      error: error.message 
-    });
-  }
-});
+//     res.json({
+//       success: true,
+//       metrics
+//     });
+//   } catch (error) {
+//     console.error('❌ Error getting metrics:', error);
+//     res.status(500).json({ 
+//       success: false,
+//       error: error.message 
+//     });
+//   }
+// });
 
 // Debug routes for testing auth
 router.get('/test-professional-auth', auth(['professional']), (req, res) => {
@@ -918,92 +1083,92 @@ router.put('/location', auth(['professional']), async (req, res) => {
     });
   }
 });
-/**
- * @swagger
- * /api/professionals/availability:
- *   patch:
- *     summary: Toggle professional availability
- *     tags: [Professionals]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - isAvailable
- *             properties:
- *               isAvailable:
- *                 type: boolean
- *                 description: Availability status
- *                 example: true
- *     responses:
- *       200:
- *         description: Availability updated successfully
- *       404:
- *         description: Professional not found
- *       500:
- *         description: Server error
- */
-router.patch('/availability', auth(['professional']), async (req, res) => {
-  try {
-    console.log('🔄 [PROFESSIONALS-AVAILABILITY] Request from professional:', req.user._id);
+// /**
+//  * @swagger
+//  * /api/professionals/availability:
+//  *   patch:
+//  *     summary: Toggle professional availability
+//  *     tags: [Professionals]
+//  *     security:
+//  *       - bearerAuth: []
+//  *     requestBody:
+//  *       required: true
+//  *       content:
+//  *         application/json:
+//  *           schema:
+//  *             type: object
+//  *             required:
+//  *               - isAvailable
+//  *             properties:
+//  *               isAvailable:
+//  *                 type: boolean
+//  *                 description: Availability status
+//  *                 example: true
+//  *     responses:
+//  *       200:
+//  *         description: Availability updated successfully
+//  *       404:
+//  *         description: Professional not found
+//  *       500:
+//  *         description: Server error
+//  */
+// router.patch('/availability', auth(['professional']), async (req, res) => {
+//   try {
+//     console.log('🔄 [PROFESSIONALS-AVAILABILITY] Request from professional:', req.user._id);
     
-    const { isAvailable } = req.body;
+//     const { isAvailable } = req.body;
 
-    if (typeof isAvailable !== 'boolean') {
-      return res.status(400).json({
-        success: false,
-        message: 'isAvailable must be a boolean value'
-      });
-    }
+//     if (typeof isAvailable !== 'boolean') {
+//       return res.status(400).json({
+//         success: false,
+//         message: 'isAvailable must be a boolean value'
+//       });
+//     }
 
-    // Find professional (try both methods)
-    let professional = await Professional.findById(req.user._id);
-    if (!professional) {
-      professional = await Professional.findOne({ userId: req.user._id });
-    }
+//     // Find professional (try both methods)
+//     let professional = await Professional.findById(req.user._id);
+//     if (!professional) {
+//       professional = await Professional.findOne({ userId: req.user._id });
+//     }
 
-    if (!professional) {
-      return res.status(404).json({
-        success: false,
-        message: 'Professional not found'
-      });
-    }
+//     if (!professional) {
+//       return res.status(404).json({
+//         success: false,
+//         message: 'Professional not found'
+//       });
+//     }
 
-    // Update availability
-    const updatedProfessional = await Professional.findByIdAndUpdate(
-      professional._id,
-      { 
-        isAvailable: isAvailable,
-        updatedAt: new Date()
-      },
-      { new: true, runValidators: true }
-    );
+//     // Update availability
+//     const updatedProfessional = await Professional.findByIdAndUpdate(
+//       professional._id,
+//       { 
+//         isAvailable: isAvailable,
+//         updatedAt: new Date()
+//       },
+//       { new: true, runValidators: true }
+//     );
 
-    console.log('✅ [PROFESSIONALS-AVAILABILITY] Availability updated successfully');
+//     console.log('✅ [PROFESSIONALS-AVAILABILITY] Availability updated successfully');
 
-    res.json({
-      success: true,
-      message: 'Availability updated successfully',
-      data: {
-        professionalId: updatedProfessional._id,
-        isAvailable: updatedProfessional.isAvailable,
-        lastUpdated: updatedProfessional.updatedAt
-      }
-    });
+//     res.json({
+//       success: true,
+//       message: 'Availability updated successfully',
+//       data: {
+//         professionalId: updatedProfessional._id,
+//         isAvailable: updatedProfessional.isAvailable,
+//         lastUpdated: updatedProfessional.updatedAt
+//       }
+//     });
 
-  } catch (error) {
-    console.error('❌ [PROFESSIONALS-AVAILABILITY] Error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to update availability',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
-  }
-});
+//   } catch (error) {
+//     console.error('❌ [PROFESSIONALS-AVAILABILITY] Error:', error);
+//     res.status(500).json({
+//       success: false,
+//       message: 'Failed to update availability',
+//       error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+//     });
+//   }
+// });
 
 /**
  * @swagger
