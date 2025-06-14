@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const locationController = require('../controllers/location.controller');
-const authMiddleware = require('../middleware/auth.middleware');
 const auth = require('../middleware/auth.middleware');
 
 /**
@@ -68,6 +67,36 @@ const auth = require('../middleware/auth.middleware');
 /**
  * @swagger
  * /api/location/address:
+ *   get:
+ *     summary: Get all user addresses
+ *     tags: [Location Management]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Addresses retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 addresses:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Address'
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Server error
+ */
+router.get('/address', auth.user(), locationController.getAddresses);
+
+/**
+ * @swagger
+ * /api/location/address:
  *   post:
  *     summary: Add a new address
  *     tags: [Location Management]
@@ -87,6 +116,9 @@ const auth = require('../middleware/auth.middleware');
  *             schema:
  *               type: object
  *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
  *                 message:
  *                   type: string
  *                   example: Address added successfully
@@ -101,7 +133,7 @@ const auth = require('../middleware/auth.middleware');
  *       500:
  *         description: Server error
  */
-router.post('/address', auth.user, locationController.addAddress);
+router.post('/address', auth.user(), locationController.addAddress);
 
 /**
  * @swagger
@@ -132,6 +164,9 @@ router.post('/address', auth.user, locationController.addAddress);
  *             schema:
  *               type: object
  *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
  *                 message:
  *                   type: string
  *                   example: Address updated successfully
@@ -146,7 +181,7 @@ router.post('/address', auth.user, locationController.addAddress);
  *       500:
  *         description: Server error
  */
-router.put('/address/:addressId', authMiddleware, locationController.updateAddress);
+router.put('/address/:addressId', auth.user(), locationController.updateAddress);
 
 /**
  * @swagger
@@ -171,6 +206,9 @@ router.put('/address/:addressId', authMiddleware, locationController.updateAddre
  *             schema:
  *               type: object
  *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
  *                 message:
  *                   type: string
  *                   example: Address deleted successfully
@@ -189,7 +227,49 @@ router.put('/address/:addressId', authMiddleware, locationController.updateAddre
  *       500:
  *         description: Server error
  */
-router.delete('/address/:addressId', authMiddleware, locationController.deleteAddress);
+router.delete('/address/:addressId', auth.user(), locationController.deleteAddress);
+
+/**
+ * @swagger
+ * /api/location/address/{addressId}/default:
+ *   put:
+ *     summary: Set an address as default
+ *     tags: [Location Management]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: addressId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: ID of the address to set as default
+ *     responses:
+ *       200:
+ *         description: Default address updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: Default address updated successfully
+ *                 addresses:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Address'
+ *       404:
+ *         description: Address not found
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Server error
+ */
+router.put('/address/:addressId/default', auth.user(), locationController.setDefaultAddress);
 
 /**
  * @swagger
@@ -213,6 +293,9 @@ router.delete('/address/:addressId', authMiddleware, locationController.deleteAd
  *             schema:
  *               type: object
  *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
  *                 message:
  *                   type: string
  *                   example: Location updated successfully
@@ -235,6 +318,66 @@ router.delete('/address/:addressId', authMiddleware, locationController.deleteAd
  *       500:
  *         description: Server error
  */
-router.post('/current-location', authMiddleware, locationController.updateCurrentLocation);
+router.post('/current-location', auth.user(), locationController.updateCurrentLocation);
+
+/**
+ * @swagger
+ * /api/location/nearby-professionals:
+ *   get:
+ *     summary: Get nearby professionals based on location
+ *     tags: [Location Management]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: latitude
+ *         required: true
+ *         schema:
+ *           type: number
+ *           format: float
+ *         description: Latitude coordinate
+ *       - in: query
+ *         name: longitude
+ *         required: true
+ *         schema:
+ *           type: number
+ *           format: float
+ *         description: Longitude coordinate
+ *       - in: query
+ *         name: radius
+ *         schema:
+ *           type: number
+ *           default: 10
+ *         description: Search radius in kilometers
+ *       - in: query
+ *         name: category
+ *         schema:
+ *           type: string
+ *         description: Professional category filter
+ *     responses:
+ *       200:
+ *         description: Nearby professionals retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 professionals:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                 count:
+ *                   type: number
+ *       400:
+ *         description: Missing coordinates
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Server error
+ */
+router.get('/nearby-professionals', auth.user(), locationController.getNearbyProfessionals);
 
 module.exports = router;
