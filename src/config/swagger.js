@@ -115,7 +115,7 @@ const swaggerDefinition = {
   servers: [
     {
       url: '/',
-      url: 'https://shayakbackend-production.up.railway.app',
+      url: 'https://shayakbackend-production-aec0.up.railway.app',
       description: 'Development server',
     },
   ],
