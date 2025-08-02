@@ -85,55 +85,98 @@ class GeospatialService {
   /**
    * Find professionals within radius of a location
    * @param {Array} coordinates - [longitude, latitude] coordinates
-   * @param {number} radius - Radius in kilometers
+   * @param {number} radius - Radius in kilometers (note: controller sends in km now)
    * @param {Array} specializations - Array of specialization categories
    * @returns {Promise<Array>} Matching professionals
    */
   async findNearbyProfessionals(coordinates, radius = 10, specializations = []) {
     try {
       logger.info(`Finding professionals near [${coordinates}] within ${radius}km`);
+      logger.info(`Specializations filter: ${specializations}`);
       
+      // Build the base query
       const query = {
-        status: 'verified',
+        // Allow both verified and under_review professionals (you can adjust this)
+        status: { $in: ['verified', 'under_review'] },
         isAvailable: true,
-        'currentLocation.coordinates': { $exists: true, $ne: [0, 0] },
-        currentLocation: {
-          $near: {
-            $geometry: {
-              type: 'Point',
-              coordinates: coordinates
-            },
-            $maxDistance: radius * 1000 // Convert km to meters
-          }
+        // Ensure coordinates exist and are not [0, 0]
+        'currentLocation.coordinates': { 
+          $exists: true, 
+          $ne: [0, 0],
+          $ne: null
         }
       };
       
       // Add specializations filter if provided
       if (specializations && specializations.length > 0) {
-        query.specializations = { $in: specializations };
+        // Clean up specializations (remove empty strings, trim whitespace)
+        const cleanSpecializations = specializations
+          .filter(spec => spec && spec.trim())
+          .map(spec => spec.trim().toLowerCase());
+        
+        if (cleanSpecializations.length > 0) {
+          query.specializations = { $in: cleanSpecializations };
+        }
       }
       
-      const professionals = await Professional.find(query)
-        .select('name phone email userId specializations currentLocation')
-        .limit(20);
+      logger.info(`Query: ${JSON.stringify(query)}`);
       
-      // Calculate and add distance to each professional
-      return professionals.map(professional => {
-        const distance = this.calculateDistance(
-          coordinates[1], coordinates[0],
-          professional.currentLocation.coordinates[1], professional.currentLocation.coordinates[0]
-        );
-        
-        return {
-          id: professional._id,
-          userId: professional.userId,
-          name: professional.name,
-          specializations: professional.specializations,
-          distance: Math.round(distance * 10) / 10 // Round to 1 decimal place
-        };
-      }).sort((a, b) => a.distance - b.distance);
+      // Use aggregation for better performance and distance calculation
+      const professionals = await Professional.aggregate([
+        {
+          $geoNear: {
+            near: {
+              type: 'Point',
+              coordinates: coordinates
+            },
+            distanceField: 'calculatedDistance',
+            maxDistance: radius * 1000, // Convert km to meters
+            spherical: true,
+            query: query
+          }
+        },
+        {
+          $project: {
+            name: 1,
+            phone: 1,
+            email: 1,
+            userId: 1,
+            specializations: 1,
+            currentLocation: 1,
+            status: 1,
+            isAvailable: 1,
+            calculatedDistance: 1,
+            distanceInKm: { $divide: ['$calculatedDistance', 1000] }
+          }
+        },
+        {
+          $sort: { calculatedDistance: 1 }
+        },
+        {
+          $limit: 20
+        }
+      ]);
+      
+      logger.info(`Found ${professionals.length} professionals`);
+      
+      // Format the response
+      return professionals.map(professional => ({
+        id: professional._id,
+        userId: professional.userId,
+        name: professional.name,
+        phone: professional.phone,
+        email: professional.email,
+        specializations: professional.specializations,
+        status: professional.status,
+        isAvailable: professional.isAvailable,
+        location: professional.currentLocation,
+        distance: Math.round(professional.distanceInKm * 10) / 10, // Round to 1 decimal place
+        distanceInMeters: Math.round(professional.calculatedDistance)
+      }));
+      
     } catch (error) {
       logger.error(`Error finding nearby professionals: ${error.message}`);
+      logger.error(`Stack trace: ${error.stack}`);
       throw new Error(`Failed to find nearby professionals: ${error.message}`);
     }
   }
@@ -150,15 +193,23 @@ class GeospatialService {
         throw new Error('Invalid service areas provided');
       }
       
+      const baseQuery = {
+        status: { $in: ['verified', 'under_review'] },
+        isAvailable: true,
+        'currentLocation.coordinates': { 
+          $exists: true, 
+          $ne: [0, 0],
+          $ne: null
+        }
+      };
+      
+      if (specializations.length > 0) {
+        baseQuery.specializations = { $in: specializations };
+      }
+      
       const professionals = await Professional.aggregate([
         {
-          $match: {
-            status: 'verified',
-            isAvailable: true,
-            ...(specializations.length > 0 && {
-              specializations: { $in: specializations }
-            })
-          }
+          $match: baseQuery
         },
         {
           $geoNear: {
