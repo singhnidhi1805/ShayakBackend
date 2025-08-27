@@ -887,4 +887,45 @@ router.post('/emergency', auth(), BookingController.createEmergencyBooking.bind(
  */
 router.get('/available', auth(['professional']), BookingController.getAvailableBookings.bind(BookingController));
 
+/**
+ * @swagger
+ * /api/bookings/{bookingId}:
+ *   get:
+ *     summary: Get booking details by ID
+ *     tags: [Bookings]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: bookingId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: ID of the booking to retrieve
+ *         example: "67948e9065f73285ae21e999"
+ *     responses:
+ *       200:
+ *         description: Booking details retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     booking:
+ *                       $ref: '#/components/schemas/Booking'
+ *       403:
+ *         description: Not authorized to view this booking
+ *       404:
+ *         description: Booking not found
+ *       500:
+ *         description: Internal server error
+ */
+router.get('/:bookingId', auth(), BookingController.getBookingById.bind(BookingController));
+
 module.exports = router;

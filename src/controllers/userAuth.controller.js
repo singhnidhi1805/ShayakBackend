@@ -61,7 +61,7 @@ const verifyOtp = async (req, res) => {
         role: dbUser.role,
       },
       JWT_SECRET,
-      { expiresIn: '1h' }
+      { expiresIn: '7d' }
     );
 
     res.json({

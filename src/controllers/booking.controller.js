@@ -445,6 +445,237 @@ calculateDistance(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
+/**
+ * Get booking details by ID
+ */
+async getBookingById(req, res) {
+  console.log('🔍 [GET-BOOKING-BY-ID] Getting booking details for ID:', req.params.bookingId);
+  console.log('👤 [GET-BOOKING-BY-ID] User ID:', req.user._id);
+  console.log('👤 [GET-BOOKING-BY-ID] User role:', req.userRole);
+  
+  try {
+    const { bookingId } = req.params;
+    
+    // Validate booking ID format
+    if (!mongoose.Types.ObjectId.isValid(bookingId)) {
+      console.log('❌ [GET-BOOKING-BY-ID] Invalid booking ID format');
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid booking ID format'
+      });
+    }
+
+    console.log('🔍 [GET-BOOKING-BY-ID] Step 1: Finding booking...');
+    
+    // Find booking with timeout protection
+    const findBookingPromise = Booking.findById(bookingId).lean();
+    const findTimeout = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Find booking timeout')), 5000);
+    });
+    
+    const booking = await Promise.race([findBookingPromise, findTimeout]);
+    
+    if (!booking) {
+      console.log('❌ [GET-BOOKING-BY-ID] Booking not found');
+      return res.status(404).json({
+        success: false,
+        message: 'Booking not found'
+      });
+    }
+    
+    console.log('✅ [GET-BOOKING-BY-ID] Found booking:', booking._id);
+    console.log('📊 [GET-BOOKING-BY-ID] Booking user:', booking.user);
+    console.log('📊 [GET-BOOKING-BY-ID] Booking professional:', booking.professional);
+    console.log('📊 [GET-BOOKING-BY-ID] Booking status:', booking.status);
+
+    // Check authorization
+    console.log('🔍 [GET-BOOKING-BY-ID] Step 2: Checking authorization...');
+    
+    const hasAccess = 
+      (req.userRole === 'user' && booking.user.toString() === req.user._id.toString()) ||
+      (req.userRole === 'professional' && booking.professional && booking.professional.toString() === req.user._id.toString()) ||
+      (req.userRole === 'admin'); // Admin can view all bookings
+    
+    if (!hasAccess) {
+      console.log('❌ [GET-BOOKING-BY-ID] Authorization failed');
+      console.log('   - User role:', req.userRole);
+      console.log('   - User ID:', req.user._id);
+      console.log('   - Booking user:', booking.user);
+      console.log('   - Booking professional:', booking.professional);
+      
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to view this booking'
+      });
+    }
+    
+    console.log('✅ [GET-BOOKING-BY-ID] Authorization passed');
+
+    // Get related data with timeout protection
+    console.log('🔍 [GET-BOOKING-BY-ID] Step 3: Getting related data...');
+    
+    const promises = [];
+    
+    // Get service data
+    if (booking.service) {
+      const servicePromise = Service.findById(booking.service)
+        .select('name category pricing estimatedDuration description')
+        .lean();
+      promises.push(servicePromise.catch(err => {
+        console.warn('⚠️ [GET-BOOKING-BY-ID] Service lookup failed:', err.message);
+        return { _id: booking.service, name: 'Service details unavailable' };
+      }));
+    } else {
+      promises.push(Promise.resolve(null));
+    }
+    
+    // Get professional data
+    if (booking.professional) {
+      const professionalPromise = Professional.findById(booking.professional)
+        .select('name phone rating specializations currentLocation')
+        .lean();
+      promises.push(professionalPromise.catch(err => {
+        console.warn('⚠️ [GET-BOOKING-BY-ID] Professional lookup failed:', err.message);
+        return { 
+          _id: booking.professional, 
+          name: 'Professional details unavailable',
+          phone: 'N/A'
+        };
+      }));
+    } else {
+      promises.push(Promise.resolve(null));
+    }
+    
+    // Get user data (for professional view)
+    if (booking.user && req.userRole === 'professional') {
+      const userPromise = User.findById(booking.user)
+        .select('name phone')
+        .lean();
+      promises.push(userPromise.catch(err => {
+        console.warn('⚠️ [GET-BOOKING-BY-ID] User lookup failed:', err.message);
+        return { 
+          _id: booking.user, 
+          name: 'User details unavailable',
+          phone: 'N/A'
+        };
+      }));
+    } else {
+      promises.push(Promise.resolve(null));
+    }
+
+    // Execute all queries with timeout
+    const queryTimeout = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Related data timeout')), 7000);
+    });
+    
+    const allQueries = Promise.all(promises);
+    const [service, professional, user] = await Promise.race([allQueries, queryTimeout]);
+
+    console.log('✅ [GET-BOOKING-BY-ID] Related data retrieved');
+    console.log('   - Service:', service ? service.name : 'Not loaded');
+    console.log('   - Professional:', professional ? professional.name : 'Not assigned/loaded');
+    console.log('   - User:', user ? user.name : 'Not needed/loaded');
+
+    // Format response
+    console.log('📦 [GET-BOOKING-BY-ID] Step 4: Formatting response...');
+    
+    let response = {
+      _id: booking._id,
+      service: service || { 
+        _id: booking.service, 
+        name: 'Service details unavailable',
+        category: 'unknown',
+        pricing: { basePrice: booking.totalAmount }
+      },
+      scheduledDate: booking.scheduledDate,
+      status: booking.status,
+      totalAmount: booking.totalAmount,
+      location: booking.location,
+      tracking: booking.tracking || {},
+      isEmergency: booking.isEmergency || false,
+      createdAt: booking.createdAt,
+      completedAt: booking.completedAt,
+      cancelledAt: booking.cancelledAt,
+      cancellationReason: booking.cancellationReason,
+      rating: booking.rating,
+      paymentStatus: booking.paymentStatus,
+      reschedulingHistory: booking.reschedulingHistory || []
+    };
+
+    // Add professional data for user view
+    if (req.userRole === 'user' || req.userRole === 'admin') {
+      response.professional = professional ? {
+        _id: professional._id,
+        name: professional.name,
+        phone: professional.phone,
+        rating: professional.rating || 0,
+        specializations: professional.specializations || [],
+        image: professional.image || null
+      } : null;
+      
+      // Don't expose verification code to users
+      if (booking.status === 'in_progress' && req.userRole === 'admin') {
+        response.verificationCode = booking.verificationCode;
+      }
+    }
+    
+    // Add user data for professional view
+    if (req.userRole === 'professional') {
+      response.user = user ? {
+        _id: user._id,
+        name: user.name,
+        phone: user.phone
+      } : {
+        _id: booking.user,
+        name: 'User details unavailable',
+        phone: 'N/A'
+      };
+      
+      // Share verification code with assigned professional
+      if (booking.status === 'in_progress') {
+        response.verificationCode = booking.verificationCode;
+      }
+    }
+
+    console.log('✅ [GET-BOOKING-BY-ID] Response formatted successfully');
+
+    res.json({
+      success: true,
+      data: { booking: response }
+    });
+    
+  } catch (error) {
+    console.error('❌ [GET-BOOKING-BY-ID] Error:', error.message);
+    console.error('📚 [GET-BOOKING-BY-ID] Stack:', error.stack);
+    
+    // Provide more specific error messages
+    let errorMessage = 'Failed to get booking details';
+    let statusCode = 500;
+    
+    if (error.message.includes('timeout')) {
+      errorMessage = 'Database query timeout - please try again';
+      statusCode = 504;
+    } else if (error.message.includes('connection')) {
+      errorMessage = 'Database connection issue - please try again';
+      statusCode = 503;
+    } else if (error.message.includes('Cast to ObjectId failed')) {
+      errorMessage = 'Invalid booking ID format';
+      statusCode = 400;
+    }
+    
+    if (!res.headersSent) {
+      res.status(statusCode).json({
+        success: false,
+        message: errorMessage,
+        debug: {
+          error: error.message,
+          timestamp: new Date().toISOString()
+        }
+      });
+    }
+  }
+}
+
   /**
    * Get booking history
    */
