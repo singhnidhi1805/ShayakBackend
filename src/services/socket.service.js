@@ -1,3 +1,4 @@
+
 const socketIO = require('socket.io');
 const jwt = require('jsonwebtoken');
 const Booking = require('../models/booking.model');
@@ -8,37 +9,64 @@ const logger = require('../config/logger');
 let io;
 const activeConnections = new Map(); // Store active socket connections
 const trackingSessions = new Map(); // Store active tracking sessions
+const bookingRooms = new Map(); // Store booking room memberships
 
 /**
- * Initialize enhanced socket.io server with tracking capabilities
+ * Initialize enhanced socket.io server with real-time tracking
  */
 const initializeSocket = (server) => {
   io = socketIO(server, {
     cors: {
-      origin: process.env.CORS_ORIGIN || '*',
+      origin: process.env.CLIENT_URL || '*',
       methods: ['GET', 'POST'],
       credentials: true
     },
     transports: ['websocket', 'polling'],
     pingTimeout: 60000,
-    pingInterval: 25000
+    pingInterval: 25000,
+    upgradeTimeout: 30000,
+    allowRequest: (req, callback) => {
+      // Allow all requests for now, but you can add IP filtering here
+      callback(null, true);
+    }
   });
   
   // Authentication middleware
   io.use(async (socket, next) => {
     try {
-      const token = socket.handshake.auth.token || socket.handshake.headers.authorization?.replace('Bearer ', '');
+      const token = socket.handshake.auth.token || 
+                   socket.handshake.headers.authorization?.replace('Bearer ', '') ||
+                   socket.handshake.query.token;
       
       if (!token) {
-        logger.warn('Socket connection attempt without token');
+        logger.warn(`Socket connection attempt without token from ${socket.handshake.address}`);
         return next(new Error('Authentication token is missing'));
       }
       
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       socket.userId = decoded.id || decoded._id || decoded.userId;
-      socket.userRole = decoded.role || decoded.userRole;
+      socket.userRole = decoded.role || decoded.userRole || 'user';
       
-      logger.info(`Socket authenticated: ${socket.userId} (${socket.userRole})`);
+      // Get user details
+      let userData;
+      if (socket.userRole === 'professional') {
+        userData = await Professional.findById(socket.userId);
+      } else {
+        userData = await User.findById(socket.userId);
+      }
+      
+      if (!userData) {
+        return next(new Error('User not found'));
+      }
+      
+      socket.userData = {
+        _id: userData._id,
+        name: userData.name || 'Unknown User',
+        phone: userData.phone || '',
+        role: socket.userRole
+      };
+      
+      logger.info(`Socket authenticated: ${socket.userId} (${socket.userRole}) - ${socket.userData.name}`);
       next();
     } catch (error) {
       logger.error(`Socket auth error: ${error.message}`);
@@ -55,45 +83,42 @@ const initializeSocket = (server) => {
       socketId: socket.id,
       socket: socket,
       role: socket.userRole,
-      connectedAt: new Date()
+      userData: socket.userData,
+      connectedAt: new Date(),
+      lastActivity: new Date()
     });
     
-    // Join user's personal room
+    // Join user's personal room and role room
     socket.join(`user:${socket.userId}`);
     socket.join(`role:${socket.userRole}`);
     
-    // Setup tracking events
-    setupTrackingEvents(socket);
-    
-    // Setup booking events
-    setupBookingEvents(socket);
-    
-    // Setup location events
-    setupLocationEvents(socket);
-    
-    // Handle reconnection
-    socket.on('reconnect_tracking', async (data) => {
-      await handleTrackingReconnection(socket, data);
+    // Send connection confirmation
+    socket.emit('connected', {
+      userId: socket.userId,
+      role: socket.userRole,
+      connectedAt: new Date()
     });
     
-    // Disconnection handler
+    // Setup event handlers
+    setupTrackingEvents(socket);
+    setupBookingEvents(socket);
+    setupLocationEvents(socket);
+    setupChatEvents(socket);
+    
+    // Handle disconnection
     socket.on('disconnect', (reason) => {
-      logger.info(`User disconnected: ${socket.userId}, Reason: ${reason}`);
-      
-      // Clean up tracking session if active
-      const trackingSessionKey = `${socket.userId}:tracking`;
-      if (trackingSessions.has(trackingSessionKey)) {
-        const session = trackingSessions.get(trackingSessionKey);
-        logger.info(`Cleaning up tracking session for booking: ${session.bookingId}`);
-        trackingSessions.delete(trackingSessionKey);
+      handleDisconnection(socket, reason);
+    });
+    
+    // Update last activity on any event
+    socket.onAny(() => {
+      if (activeConnections.has(socket.userId)) {
+        activeConnections.get(socket.userId).lastActivity = new Date();
       }
-      
-      // Remove from active connections
-      activeConnections.delete(socket.userId);
     });
   });
   
-  logger.info('Enhanced Socket.io server initialized with tracking support');
+  logger.info('Enhanced Socket.io server initialized with real-time tracking support');
   return io;
 };
 
@@ -101,17 +126,23 @@ const initializeSocket = (server) => {
  * Setup tracking-specific socket events
  */
 const setupTrackingEvents = (socket) => {
-  // Start tracking session
+  // Start tracking session for a booking
   socket.on('start_tracking_session', async (data) => {
     try {
       const { bookingId } = data;
+      
+      if (!bookingId) {
+        socket.emit('tracking_error', { message: 'Booking ID is required' });
+        return;
+      }
       
       logger.info(`Starting tracking session for booking: ${bookingId}, User: ${socket.userId}`);
       
       // Verify booking exists and user has access
       const booking = await Booking.findById(bookingId)
-        .populate('user', '_id name')
-        .populate('professional', '_id name currentLocation');
+        .populate('user', '_id name phone currentLocation')
+        .populate('professional', '_id name phone currentLocation rating')
+        .populate('service', 'name category estimatedDuration');
       
       if (!booking) {
         socket.emit('tracking_error', { message: 'Booking not found' });
@@ -121,7 +152,8 @@ const setupTrackingEvents = (socket) => {
       // Check authorization
       const isAuthorized = 
         (socket.userRole === 'user' && booking.user._id.toString() === socket.userId) ||
-        (socket.userRole === 'professional' && booking.professional && booking.professional._id.toString() === socket.userId);
+        (socket.userRole === 'professional' && booking.professional && booking.professional._id.toString() === socket.userId) ||
+        (socket.userRole === 'admin');
       
       if (!isAuthorized) {
         socket.emit('tracking_error', { message: 'Not authorized for this booking' });
@@ -133,44 +165,77 @@ const setupTrackingEvents = (socket) => {
       socket.join(trackingRoom);
       
       // Store tracking session
-      const sessionKey = `${socket.userId}:tracking`;
+      const sessionKey = `${socket.userId}:${bookingId}`;
       trackingSessions.set(sessionKey, {
         bookingId: bookingId,
         userId: socket.userId,
         userRole: socket.userRole,
-        socketId: socket// services/enhanced-socket.service.js (continued from previous)
-
-.id,
+        socketId: socket.id,
         startedAt: new Date(),
-        room: trackingRoom
+        room: trackingRoom,
+        booking: booking
       });
       
-      // Send initial tracking data
+      // Prepare initial tracking data
       let initialTrackingData = {
         bookingId: bookingId,
         status: booking.status,
         userRole: socket.userRole,
-        trackingStarted: true
+        trackingStarted: true,
+        service: {
+          name: booking.service.name,
+          category: booking.service.category,
+          estimatedDuration: booking.service.estimatedDuration
+        },
+        destination: {
+          coordinates: booking.location.coordinates,
+          address: booking.location.address || 'Service location'
+        }
       };
       
       // Add role-specific data
       if (socket.userRole === 'user' && booking.professional) {
         initialTrackingData.professional = {
+          _id: booking.professional._id,
           name: booking.professional.name,
+          phone: booking.professional.phone,
+          rating: booking.professional.rating || 0,
           currentLocation: booking.professional.currentLocation
         };
         
-        // Calculate initial ETA if professional has location
-        if (booking.professional.currentLocation && booking.professional.currentLocation.coordinates) {
-          initialTrackingData.eta = calculateETA(
-            booking.professional.currentLocation.coordinates,
-            booking.location.coordinates
+        // Calculate current ETA if professional has location
+        if (booking.professional.currentLocation?.coordinates) {
+          const distance = calculateDistance(
+            booking.professional.currentLocation.coordinates[1],
+            booking.professional.currentLocation.coordinates[0],
+            booking.location.coordinates[1],
+            booking.location.coordinates[0]
           );
+          initialTrackingData.currentETA = calculateETA(distance);
+          initialTrackingData.currentDistance = distance;
         }
       } else if (socket.userRole === 'professional') {
+        initialTrackingData.customer = {
+          _id: booking.user._id,
+          name: booking.user.name,
+          phone: booking.user.phone
+        };
+        
         initialTrackingData.destination = {
           coordinates: booking.location.coordinates,
           address: booking.location.address || 'Customer location'
+        };
+      }
+      
+      // Add existing tracking data
+      if (booking.tracking) {
+        initialTrackingData.trackingHistory = {
+          initialETA: booking.tracking.initialETA,
+          currentETA: booking.tracking.eta,
+          distance: booking.tracking.distance,
+          startedAt: booking.tracking.startedAt,
+          arrivedAt: booking.tracking.arrivedAt,
+          lastLocation: booking.tracking.lastLocation
         };
       }
       
@@ -183,7 +248,7 @@ const setupTrackingEvents = (socket) => {
     }
   });
   
-  // Professional location updates during tracking
+  // Professional location updates during active tracking
   socket.on('update_tracking_location', async (data) => {
     try {
       if (socket.userRole !== 'professional') {
@@ -193,23 +258,38 @@ const setupTrackingEvents = (socket) => {
       
       const { bookingId, coordinates, heading, speed, accuracy } = data;
       
-      if (!bookingId || !coordinates || coordinates.length !== 2) {
+      if (!bookingId || !coordinates || !Array.isArray(coordinates) || coordinates.length !== 2) {
         socket.emit('tracking_error', { message: 'Invalid tracking data' });
         return;
       }
       
-      logger.info(`Professional ${socket.userId} updating tracking location for booking ${bookingId}`);
+      logger.info(`Professional ${socket.userId} updating location for booking ${bookingId}: ${coordinates}`);
       
-      // Verify booking and professional assignment
-      const booking = await Booking.findById(bookingId);
+      // Find booking and verify authorization
+      const booking = await Booking.findById(bookingId).populate('user', 'name');
       
       if (!booking || !booking.professional || booking.professional.toString() !== socket.userId) {
         socket.emit('tracking_error', { message: 'Not authorized for this booking' });
         return;
       }
       
+      // Validate booking status
+      if (!['accepted', 'in_progress'].includes(booking.status)) {
+        socket.emit('tracking_error', { message: `Cannot update location for booking with status: ${booking.status}` });
+        return;
+      }
+      
+      const [longitude, latitude] = coordinates;
+      
+      // Validate coordinate ranges
+      if (longitude < -180 || longitude > 180 || latitude < -90 || latitude > 90) {
+        socket.emit('tracking_error', { message: 'Coordinates out of valid range' });
+        return;
+      }
+      
       // Update professional's location in database
       await Professional.findByIdAndUpdate(socket.userId, {
+        'currentLocation.type': 'Point',
         'currentLocation.coordinates': coordinates,
         'currentLocation.timestamp': new Date(),
         'currentLocation.accuracy': accuracy || null,
@@ -217,33 +297,30 @@ const setupTrackingEvents = (socket) => {
         'currentLocation.speed': speed || null
       });
       
-      // Calculate ETA and distance
+      // Calculate ETA and distance to booking location
       const distance = calculateDistance(
-        coordinates[1], coordinates[0],
+        latitude, longitude,
         booking.location.coordinates[1], booking.location.coordinates[0]
       );
-      const eta = calculateETA(coordinates, booking.location.coordinates);
+      const eta = calculateETA(distance, speed);
       
-      // Update booking tracking
+      // Update booking tracking information
       const trackingUpdate = {
-        lastLocation: {
-          type: 'Point',
-          coordinates: coordinates,
-          timestamp: new Date()
-        },
-        eta: eta,
-        distance: distance,
-        heading: heading || null,
-        speed: speed || null,
-        accuracy: accuracy || null
+        'tracking.lastLocation.type': 'Point',
+        'tracking.lastLocation.coordinates': coordinates,
+        'tracking.lastLocation.timestamp': new Date(),
+        'tracking.eta': eta,
+        'tracking.distance': distance,
+        'tracking.lastUpdate': new Date()
       };
       
-      if (!booking.tracking) booking.tracking = {};
-      Object.assign(booking.tracking, trackingUpdate);
-      await booking.save();
+      if (heading !== undefined) trackingUpdate['tracking.heading'] = heading;
+      if (speed !== undefined) trackingUpdate['tracking.speed'] = speed;
+      if (accuracy !== undefined) trackingUpdate['tracking.accuracy'] = accuracy;
       
-      // Broadcast to tracking room
-      const trackingRoom = `tracking:${bookingId}`;
+      await Booking.findByIdAndUpdate(bookingId, trackingUpdate);
+      
+      // Prepare location update data for broadcast
       const locationUpdate = {
         bookingId: bookingId,
         professionalLocation: {
@@ -255,20 +332,29 @@ const setupTrackingEvents = (socket) => {
         },
         eta: eta,
         distance: distance,
-        isMoving: speed && speed > 0.5
+        isMoving: speed > 1.0, // Moving if speed > 1 km/h
+        lastUpdate: new Date()
       };
       
-      io.to(trackingRoom).emit('location_updated', locationUpdate);
+      // Broadcast to tracking room
+      const trackingRoom = `tracking:${bookingId}`;
+      socket.to(trackingRoom).emit('location_updated', locationUpdate);
       
       // Also send to user's personal room for reliability
-      io.to(`user:${booking.user}`).emit('professional_location_update', locationUpdate);
+      if (booking.user) {
+        io.to(`user:${booking.user._id}`).emit('professional_location_update', locationUpdate);
+      }
       
+      // Confirm to professional
       socket.emit('location_update_confirmed', {
         bookingId: bookingId,
         timestamp: new Date(),
         eta: eta,
-        distance: distance
+        distance: distance,
+        coordinates: coordinates
       });
+      
+      logger.info(`Location updated for booking ${bookingId}: ETA ${eta}min, Distance ${distance.toFixed(2)}km`);
       
     } catch (error) {
       logger.error(`Error updating tracking location: ${error.message}`);
@@ -280,7 +366,7 @@ const setupTrackingEvents = (socket) => {
   socket.on('end_tracking_session', async (data) => {
     try {
       const { bookingId } = data;
-      const sessionKey = `${socket.userId}:tracking`;
+      const sessionKey = `${socket.userId}:${bookingId}`;
       
       if (trackingSessions.has(sessionKey)) {
         const session = trackingSessions.get(sessionKey);
@@ -292,7 +378,7 @@ const setupTrackingEvents = (socket) => {
         trackingSessions.delete(sessionKey);
         
         // Notify room that tracking ended
-        io.to(session.room).emit('tracking_session_ended', {
+        socket.to(session.room).emit('tracking_session_ended', {
           bookingId: bookingId,
           endedBy: socket.userId,
           endedAt: new Date()
@@ -330,7 +416,8 @@ const setupTrackingEvents = (socket) => {
         io.to(`user:${booking.professional}`).emit('eta_update_requested', {
           bookingId: bookingId,
           requestedBy: socket.userId,
-          requestedAt: new Date()
+          requestedAt: new Date(),
+          customerName: socket.userData.name
         });
         
         socket.emit('eta_request_sent', { bookingId });
@@ -349,8 +436,15 @@ const setupTrackingEvents = (socket) => {
  */
 const setupBookingEvents = (socket) => {
   // Join booking room for updates
-  socket.on('join_booking_updates', async (bookingId) => {
+  socket.on('join_booking_room', async (data) => {
     try {
+      const { bookingId } = data;
+      
+      if (!bookingId) {
+        socket.emit('booking_error', { message: 'Booking ID is required' });
+        return;
+      }
+      
       const booking = await Booking.findById(bookingId);
       
       if (!booking) {
@@ -369,43 +463,81 @@ const setupBookingEvents = (socket) => {
         return;
       }
       
-      socket.join(`booking:${bookingId}`);
-      socket.emit('booking_joined', { bookingId });
+      const bookingRoom = `booking:${bookingId}`;
+      socket.join(bookingRoom);
+      
+      // Store room membership
+      if (!bookingRooms.has(bookingId)) {
+        bookingRooms.set(bookingId, new Set());
+      }
+      bookingRooms.get(bookingId).add(socket.userId);
+      
+      socket.emit('booking_room_joined', { bookingId, room: bookingRoom });
+      
+      logger.info(`User ${socket.userId} joined booking room: ${bookingRoom}`);
       
     } catch (error) {
-      logger.error(`Error joining booking updates: ${error.message}`);
-      socket.emit('booking_error', { message: 'Failed to join booking updates' });
+      logger.error(`Error joining booking room: ${error.message}`);
+      socket.emit('booking_error', { message: 'Failed to join booking room' });
     }
   });
   
-  // Professional accepting booking
-  socket.on('booking_accepted', async (data) => {
+  // Leave booking room
+  socket.on('leave_booking_room', (data) => {
     try {
       const { bookingId } = data;
       
-      // Notify user about acceptance
-      const booking = await Booking.findById(bookingId).populate('professional', 'name phone');
-      
-      if (booking) {
-        io.to(`user:${booking.user}`).emit('booking_status_update', {
-          bookingId: bookingId,
-          status: 'accepted',
-          professional: {
-            name: booking.professional.name,
-            phone: booking.professional.phone
-          },
-          message: 'Your booking has been accepted! Professional is getting ready.'
-        });
+      if (bookingId) {
+        const bookingRoom = `booking:${bookingId}`;
+        socket.leave(bookingRoom);
         
-        // Start tracking automatically when booking is accepted
-        io.to(`booking:${bookingId}`).emit('tracking_ready', {
-          bookingId: bookingId,
-          message: 'Tracking is now available for this booking'
-        });
+        // Remove from room membership
+        if (bookingRooms.has(bookingId)) {
+          bookingRooms.get(bookingId).delete(socket.userId);
+          if (bookingRooms.get(bookingId).size === 0) {
+            bookingRooms.delete(bookingId);
+          }
+        }
+        
+        socket.emit('booking_room_left', { bookingId });
+        logger.info(`User ${socket.userId} left booking room: ${bookingRoom}`);
       }
       
     } catch (error) {
-      logger.error(`Error handling booking acceptance: ${error.message}`);
+      logger.error(`Error leaving booking room: ${error.message}`);
+    }
+  });
+  
+  // Booking status updates
+  socket.on('booking_status_update', async (data) => {
+    try {
+      const { bookingId, status, message } = data;
+      
+      const booking = await Booking.findById(bookingId);
+      if (!booking) return;
+      
+      // Verify authorization
+      const isAuthorized = 
+        (socket.userRole === 'professional' && booking.professional && booking.professional.toString() === socket.userId) ||
+        (socket.userRole === 'admin');
+      
+      if (!isAuthorized) return;
+      
+      // Broadcast status update
+      const statusUpdate = {
+        bookingId: bookingId,
+        status: status,
+        message: message || `Booking status updated to ${status}`,
+        timestamp: new Date(),
+        updatedBy: socket.userData.name
+      };
+      
+      io.to(`booking:${bookingId}`).emit('booking_status_updated', statusUpdate);
+      
+      logger.info(`Booking status updated: ${bookingId} -> ${status}`);
+      
+    } catch (error) {
+      logger.error(`Error updating booking status: ${error.message}`);
     }
   });
 };
@@ -414,7 +546,7 @@ const setupBookingEvents = (socket) => {
  * Setup location-related events
  */
 const setupLocationEvents = (socket) => {
-  // Professional availability update
+  // Professional availability update with location
   socket.on('update_availability', async (data) => {
     try {
       if (socket.userRole !== 'professional') {
@@ -424,66 +556,207 @@ const setupLocationEvents = (socket) => {
       
       const { isAvailable, coordinates } = data;
       
-      await Professional.findByIdAndUpdate(socket.userId, {
-        isAvailable: isAvailable,
-        'currentLocation.coordinates': coordinates || undefined,
-        'currentLocation.timestamp': new Date()
+      const updateData = {
+        isAvailable: isAvailable
+      };
+      
+      if (coordinates && Array.isArray(coordinates) && coordinates.length === 2) {
+        updateData['currentLocation.type'] = 'Point';
+        updateData['currentLocation.coordinates'] = coordinates;
+        updateData['currentLocation.timestamp'] = new Date();
+      }
+      
+      await Professional.findByIdAndUpdate(socket.userId, updateData);
+      
+      socket.emit('availability_updated', { 
+        isAvailable, 
+        coordinates,
+        timestamp: new Date() 
       });
       
-      socket.emit('availability_updated', { isAvailable, coordinates });
+      logger.info(`Professional ${socket.userId} availability updated: ${isAvailable}`);
       
     } catch (error) {
       logger.error(`Error updating availability: ${error.message}`);
       socket.emit('location_error', { message: 'Failed to update availability' });
     }
   });
+  
+  // Heartbeat location update for active professionals
+  socket.on('heartbeat_location', async (data) => {
+    try {
+      if (socket.userRole !== 'professional') return;
+      
+      const { coordinates, accuracy, heading, speed } = data;
+      
+      if (!coordinates || !Array.isArray(coordinates) || coordinates.length !== 2) return;
+      
+      // Update professional location
+      await Professional.findByIdAndUpdate(socket.userId, {
+        'currentLocation.coordinates': coordinates,
+        'currentLocation.timestamp': new Date(),
+        'currentLocation.accuracy': accuracy || null,
+        'currentLocation.heading': heading || null,
+        'currentLocation.speed': speed || null
+      });
+      
+      // Update active connection
+      if (activeConnections.has(socket.userId)) {
+        activeConnections.get(socket.userId).lastLocation = {
+          coordinates,
+          timestamp: new Date()
+        };
+      }
+      
+    } catch (error) {
+      logger.error(`Error updating heartbeat location: ${error.message}`);
+    }
+  });
 };
 
 /**
- * Handle tracking reconnection
+ * Setup chat-related events
  */
-const handleTrackingReconnection = async (socket, data) => {
+const setupChatEvents = (socket) => {
+  // Join chat room for booking
+  socket.on('join_chat', async (data) => {
+    try {
+      const { bookingId } = data;
+      
+      const booking = await Booking.findById(bookingId);
+      if (!booking) {
+        socket.emit('chat_error', { message: 'Booking not found' });
+        return;
+      }
+      
+      // Check authorization
+      const isAuthorized = 
+        (socket.userRole === 'user' && booking.user.toString() === socket.userId) ||
+        (socket.userRole === 'professional' && booking.professional && booking.professional.toString() === socket.userId);
+      
+      if (!isAuthorized) {
+        socket.emit('chat_error', { message: 'Not authorized for this chat' });
+        return;
+      }
+      
+      const chatRoom = `chat:${bookingId}`;
+      socket.join(chatRoom);
+      
+      socket.emit('chat_joined', { bookingId, room: chatRoom });
+      
+    } catch (error) {
+      logger.error(`Error joining chat: ${error.message}`);
+      socket.emit('chat_error', { message: 'Failed to join chat' });
+    }
+  });
+  
+  // Send chat message
+  socket.on('send_message', async (data) => {
+    try {
+      const { bookingId, message, type = 'text' } = data;
+      
+      if (!bookingId || !message) {
+        socket.emit('chat_error', { message: 'Missing required fields' });
+        return;
+      }
+      
+      const booking = await Booking.findById(bookingId);
+      if (!booking) {
+        socket.emit('chat_error', { message: 'Booking not found' });
+        return;
+      }
+      
+      // Verify authorization
+      const isAuthorized = 
+        (socket.userRole === 'user' && booking.user.toString() === socket.userId) ||
+        (socket.userRole === 'professional' && booking.professional && booking.professional.toString() === socket.userId);
+      
+      if (!isAuthorized) {
+        socket.emit('chat_error', { message: 'Not authorized to send messages' });
+        return;
+      }
+      
+      const messageData = {
+        bookingId: bookingId,
+        senderId: socket.userId,
+        senderName: socket.userData.name,
+        senderRole: socket.userRole,
+        message: message,
+        type: type,
+        timestamp: new Date()
+      };
+      
+      // Broadcast to chat room
+      io.to(`chat:${bookingId}`).emit('new_message', messageData);
+      
+      logger.info(`Message sent in booking ${bookingId} by ${socket.userData.name}`);
+      
+    } catch (error) {
+      logger.error(`Error sending message: ${error.message}`);
+      socket.emit('chat_error', { message: 'Failed to send message' });
+    }
+  });
+};
+
+/**
+ * Handle socket disconnection
+ */
+const handleDisconnection = (socket, reason) => {
+  logger.info(`User disconnected: ${socket.userId}, Reason: ${reason}`);
+  
   try {
-    const { bookingId } = data;
+    // Clean up tracking sessions
+    const userSessions = Array.from(trackingSessions.entries())
+      .filter(([key, session]) => session.userId === socket.userId);
     
-    logger.info(`Handling tracking reconnection for booking: ${bookingId}, User: ${socket.userId}`);
+    userSessions.forEach(([sessionKey, session]) => {
+      logger.info(`Cleaning up tracking session: ${session.bookingId}`);
+      
+      // Notify others in tracking room
+      socket.to(session.room).emit('participant_disconnected', {
+        bookingId: session.bookingId,
+        userId: socket.userId,
+        userName: socket.userData.name,
+        userRole: socket.userRole,
+        disconnectedAt: new Date()
+      });
+      
+      trackingSessions.delete(sessionKey);
+    });
     
-    // Verify booking and get current state
-    const booking = await Booking.findById(bookingId)
-      .populate('professional', 'name currentLocation');
+    // Clean up booking room memberships
+    bookingRooms.forEach((members, bookingId) => {
+      if (members.has(socket.userId)) {
+        members.delete(socket.userId);
+        if (members.size === 0) {
+          bookingRooms.delete(bookingId);
+        }
+      }
+    });
     
-    if (!booking) {
-      socket.emit('tracking_error', { message: 'Booking not found' });
-      return;
+    // Remove from active connections
+    activeConnections.delete(socket.userId);
+    
+    // Update professional availability if they disconnect unexpectedly
+    if (socket.userRole === 'professional') {
+      setTimeout(async () => {
+        try {
+          await Professional.findByIdAndUpdate(socket.userId, {
+            'currentLocation.lastSeen': new Date()
+          });
+        } catch (error) {
+          logger.error(`Error updating professional last seen: ${error.message}`);
+        }
+      }, 1000);
     }
-    
-    // Rejoin tracking room
-    const trackingRoom = `tracking:${bookingId}`;
-    socket.join(trackingRoom);
-    
-    // Send current tracking state
-    let trackingState = {
-      bookingId: bookingId,
-      status: booking.status,
-      reconnected: true
-    };
-    
-    if (booking.professional && booking.professional.currentLocation) {
-      trackingState.currentLocation = booking.professional.currentLocation;
-      trackingState.eta = booking.tracking?.eta || null;
-      trackingState.distance = booking.tracking?.distance || null;
-    }
-    
-    socket.emit('tracking_reconnected', trackingState);
     
   } catch (error) {
-    logger.error(`Error handling tracking reconnection: ${error.message}`);
-    socket.emit('tracking_error', { message: 'Failed to reconnect tracking' });
+    logger.error(`Error during disconnection cleanup: ${error.message}`);
   }
 };
 
 /**
- * Calculate distance between two points
+ * Calculate distance between two points using Haversine formula
  */
 const calculateDistance = (lat1, lon1, lat2, lon2) => {
   const R = 6371; // Earth's radius in km
@@ -500,50 +773,128 @@ const calculateDistance = (lat1, lon1, lat2, lon2) => {
 /**
  * Calculate ETA based on distance and average speed
  */
-const calculateETA = (startCoords, endCoords, averageSpeed = 30) => {
-  const [startLng, startLat] = startCoords;
-  const [endLng, endLat] = endCoords;
+const calculateETA = (distance, averageSpeed = 30) => {
+  if (!distance || distance <= 0) return 0;
   
-  const distance = calculateDistance(startLat, startLng, endLat, endLng);
-  const timeInMinutes = Math.round((distance / averageSpeed) * 60);
+  const timeInHours = distance / averageSpeed;
+  const timeInMinutes = Math.round(timeInHours * 60);
   
   return Math.max(1, timeInMinutes);
 };
 
 /**
- * Public methods for external use
+ * Get active connections info
  */
-const sendTrackingUpdate = (userId, data) => {
-  if (io && activeConnections.has(userId)) {
-    io.to(`user:${userId}`).emit('tracking_update', data);
-    logger.info(`Tracking update sent to user: ${userId}`);
-  }
-};
-
-const sendBookingUpdate = (bookingId, data) => {
-  if (io) {
-    io.to(`booking:${bookingId}`).emit('booking_update', data);
-    io.to(`tracking:${bookingId}`).emit('booking_update', data);
-    logger.info(`Booking update sent for booking: ${bookingId}`);
-  }
-};
-
-const sendLocationUpdate = (professionalId, locationData) => {
-  if (io) {
-    io.to(`user:${professionalId}`).emit('location_update', locationData);
-  }
-};
-
 const getActiveConnections = () => {
   return Array.from(activeConnections.entries()).map(([userId, connection]) => ({
     userId,
     role: connection.role,
-    connectedAt: connection.connectedAt
+    userData: connection.userData,
+    connectedAt: connection.connectedAt,
+    lastActivity: connection.lastActivity
   }));
 };
 
+/**
+ * Get active tracking sessions info
+ */
 const getActiveTrackingSessions = () => {
-  return Array.from(trackingSessions.values());
+  return Array.from(trackingSessions.values()).map(session => ({
+    bookingId: session.bookingId,
+    userId: session.userId,
+    userRole: session.userRole,
+    startedAt: session.startedAt
+  }));
+};
+
+/**
+ * Send tracking update to specific user
+ */
+const sendTrackingUpdate = (userId, data) => {
+  try {
+    if (io && activeConnections.has(userId)) {
+      io.to(`user:${userId}`).emit('tracking_update', data);
+      logger.info(`Tracking update sent to user: ${userId}`);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    logger.error(`Error sending tracking update: ${error.message}`);
+    return false;
+  }
+};
+
+/**
+ * Send booking update to booking room
+ */
+const sendBookingUpdate = (bookingId, data) => {
+  try {
+    if (io) {
+      io.to(`booking:${bookingId}`).emit('booking_update', data);
+      io.to(`tracking:${bookingId}`).emit('booking_update', data);
+      logger.info(`Booking update sent for booking: ${bookingId}`);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    logger.error(`Error sending booking update: ${error.message}`);
+    return false;
+  }
+};
+
+/**
+ * Send location update to relevant parties
+ */
+const sendLocationUpdate = (professionalId, locationData) => {
+  try {
+    if (io) {
+      // Send to professional
+      io.to(`user:${professionalId}`).emit('location_update', locationData);
+      
+      // Find active bookings for this professional and notify customers
+      Booking.find({
+        professional: professionalId,
+        status: { $in: ['accepted', 'in_progress'] }
+      }).then(bookings => {
+        bookings.forEach(booking => {
+          io.to(`user:${booking.user}`).emit('professional_location_update', {
+            ...locationData,
+            bookingId: booking._id
+          });
+        });
+      });
+      
+      return true;
+    }
+    return false;
+  } catch (error) {
+    logger.error(`Error sending location update: ${error.message}`);
+    return false;
+  }
+};
+
+/**
+ * Broadcast emergency alert to nearby professionals
+ */
+const broadcastEmergencyAlert = (location, serviceCategory, bookingData) => {
+  try {
+    if (!io) return false;
+    
+    // Send to all online professionals in the category
+    io.to('role:professional').emit('emergency_booking_alert', {
+      location: location,
+      serviceCategory: serviceCategory,
+      bookingData: bookingData,
+      alertTime: new Date()
+    });
+    
+    logger.info(`Emergency alert broadcasted for ${serviceCategory} at ${location}`);
+    return true;
+    
+  } catch (error) {
+    logger.error(`Error broadcasting emergency alert: ${error.message}`);
+    return false;
+  }
 };
 
 module.exports = {
@@ -551,6 +902,7 @@ module.exports = {
   sendTrackingUpdate,
   sendBookingUpdate,
   sendLocationUpdate,
+  broadcastEmergencyAlert,
   getActiveConnections,
   getActiveTrackingSessions,
   getIO: () => io

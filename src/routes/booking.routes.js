@@ -171,10 +171,10 @@ const BookingController = require('../controllers/booking.controller');
  *       500:
  *         description: Internal server error
  */
-router.post('/', auth(), (req, res) => {
-  console.log('🚀 POST /bookings - Creating new booking');
-  BookingController.createBooking(req, res);
-});
+router.post('/', 
+  auth(['user']), 
+  BookingController.createBooking.bind(BookingController)
+);
 
 /**
  * @swagger
@@ -225,10 +225,10 @@ router.post('/', auth(), (req, res) => {
  *       404:
  *         description: Booking not found
  */
-router.post('/:bookingId/accept', auth(['professional']), (req, res) => {
-  console.log('✅ POST /bookings/:id/accept - Professional accepting booking');
-  BookingController.acceptBooking(req, res);
-});
+router.post('/:bookingId/accept', 
+  auth(['professional']), 
+  BookingController.acceptBooking.bind(BookingController)
+);
 
 /**
  * @swagger
@@ -259,7 +259,10 @@ router.post('/:bookingId/accept', auth(['professional']), (req, res) => {
  *       500:
  *         description: Internal server error
  */
-router.get('/active', auth(), BookingController.getActiveBooking.bind(BookingController));
+router.get('/active', 
+  auth(), 
+  BookingController.getActiveBooking.bind(BookingController)
+);
 
 /**
  * @swagger
@@ -378,7 +381,10 @@ router.get('/history', auth(), BookingController.getBookingHistory.bind(BookingC
  *       404:
  *         description: Booking not found
  */
-router.post('/:bookingId/complete', auth(['professional']), BookingController.completeBooking.bind(BookingController));
+router.post('/:bookingId/complete', 
+  auth(['professional']), 
+  BookingController.completeBooking.bind(BookingController)
+);
 
 /**
  * @swagger
@@ -487,7 +493,10 @@ router.post('/:bookingId/cancel', auth(), BookingController.cancelBooking.bind(B
  *       404:
  *         description: Booking not found
  */
-router.post('/:bookingId/start', auth(['professional']), BookingController.startService.bind(BookingController));
+router.post('/:bookingId/start', 
+  auth(['professional']), 
+  BookingController.startService.bind(BookingController)
+);
 
 
 /**
@@ -538,7 +547,10 @@ router.post('/:bookingId/start', auth(['professional']), BookingController.start
  *       404:
  *         description: Booking not found
  */
-router.post('/:bookingId/arrived', auth(['professional']), BookingController.professionalArrived.bind(BookingController));
+router.post('/:bookingId/arrived', 
+  auth(['professional']), 
+  BookingController.professionalArrived.bind(BookingController)
+);
 
 /**
  * @swagger
@@ -885,7 +897,10 @@ router.post('/emergency', auth(), BookingController.createEmergencyBooking.bind(
  *       500:
  *         description: Internal server error
  */
-router.get('/available', auth(['professional']), BookingController.getAvailableBookings.bind(BookingController));
+router.get('/available', 
+  auth(['professional']), 
+  BookingController.getAvailableBookings.bind(BookingController)
+);
 
 /**
  * @swagger
@@ -926,6 +941,10 @@ router.get('/available', auth(['professional']), BookingController.getAvailableB
  *       500:
  *         description: Internal server error
  */
-router.get('/:bookingId', auth(), BookingController.getBookingById.bind(BookingController));
+router.get('/:bookingId', 
+  auth(), 
+  BookingController.getBookingById.bind(BookingController)
+);
+
 
 module.exports = router;

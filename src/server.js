@@ -2,24 +2,28 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const http = require('http');
-
-// Import routes
-const authRoutes = require('./routes/auth.routes');
-const bookingRoutes = require('./routes/booking.routes');
 const professionalRoutes = require('./routes/professional.routes');
-const locationRoutes = require('./routes/location.routes');
-const trackingRoutes = require('./routes/tracking.routes');
-const professionalLocationRoutes = require('./routes/professional-location.routes');
-
-// Import services and config
 const connectDB = require('./config/database');
+const authRoutes = require('./routes/auth.routes');
+const professionalLocationRoutes = require('./routes/professional-location.routes');
+const servicemanagement = require('./routes/service-management.routes');
+const earningRoutes = require('./routes/earnings.routes');
+const adminRoutes = require('./routes/admin.routes');
+const documentVerificationRoutes = require('./routes/document-verification.routes');
+const supportRoutes = require('./routes/support.routes');
 const setupSwagger = require('./config/swagger');
 const logger = require('./config/logger');
-const EnhancedSocketService = require('./services/socket.service');
-
+const http = require('http');
+const socketService = require('./services/socket.service');
+const locationRoutes = require('./routes/location.routes');
+const trackingRoutes = require('./routes/tracking.routes');
+const testRoutes = require('./routes/test.routes');
+const scheduleRoutes = require('./routes/schedule.routes');
 const app = express();
 const server = http.createServer(app);
+const EnhancedSocketService = require('./services/socket.service');
+
+
 
 // CORS configuration for tracking
 const corsOptions = {
@@ -54,15 +58,28 @@ app.get('/health', (req, res) => {
     }
   });
 });
+// Middleware
+app.use(cors());
+app.use(express.json());
 
-// API Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/bookings', bookingRoutes);
+// Initialize socket service
+socketService.initializeSocket(server);
+
+// Routes
+app.use('/api/auth', authRoutes);  // This includes user, professional, and admin OTP routes
+app.use('/api/services', require('./routes/service.routes'));
+app.use('/api/bookings', require('./routes/booking.routes'));
 app.use('/api/professionals', professionalRoutes);
-app.use('/api/location', locationRoutes);
+app.use('/api/professionals', require('./routes/professional-onboarding.routes'));
 app.use('/api/professional', professionalLocationRoutes);
-
-// NEW: Tracking routes for real-time location updates
+app.use('/api/professional', earningRoutes);
+app.use('/api/professionals', require('./routes/document-verification.routes'));
+app.use('/api/location', require('./routes/location.routes'));
+app.use('/api', servicemanagement);
+app.use('/api/admin', adminRoutes);
+app.use('/api/support', supportRoutes);
+app.use('/api/test', testRoutes);
+app.use('/api/professional/schedule', scheduleRoutes);
 app.use('/api/tracking', trackingRoutes);
 
 // Additional routes (if they exist)
@@ -89,32 +106,14 @@ app.get('/api/tracking/status', (req, res) => {
     }
   });
 });
-
-// Connect to database
 connectDB();
 
-// Setup Swagger documentation
 setupSwagger(app);
 
-// Error handling middleware
 app.use((err, req, res, next) => {
-  logger.error('Unhandled error:', err);
-  
-  // Don't send error details in production
-  const isDevelopment = process.env.NODE_ENV === 'development';
-  
+  logger.error(err.stack);
   res.status(err.status || 500).json({
-    success: false,
-    message: err.message || 'Internal server error',
-    ...(isDevelopment && { stack: err.stack })
-  });
-});
-
-// Handle 404
-app.use('*', (req, res) => {
-  res.status(404).json({
-    success: false,
-    message: `Route ${req.method} ${req.originalUrl} not found`
+      error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
   });
 });
 
@@ -122,24 +121,16 @@ app.use('*', (req, res) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   logger.info(`Server running on port ${PORT}`);
-  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  logger.info(`Enhanced tracking system initialized`);
+  logger.info('Environment:', process.env.NODE_ENV);
 });
 
-// Handle graceful shutdown
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM received, shutting down gracefully');
-  server.close(() => {
-    logger.info('Process terminated');
-    process.exit(0);
-  });
-});
-
+// Handle unhandled promise rejections
 process.on('unhandledRejection', (err) => {
   logger.error('Unhandled Promise Rejection:', err);
+  // Don't exit the process in development
   if (process.env.NODE_ENV === 'production') {
-    server.close(() => process.exit(1));
+      server.close(() => process.exit(1));
   }
 });
 
-module.exports = { app, server };
+module.exports = { app, server, socketService };
