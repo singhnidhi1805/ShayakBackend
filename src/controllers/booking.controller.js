@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 const Booking = require('../models/booking.model');
 const Service = require('../models/service.model');
 const Professional = require('../models/professional.model');
-const BookingService = require('../services/BookingService'); // Use exact filename
+const EnhancedBookingService = require('../services/BookingService'); // Use exact filename
 // const logger = require('../config/logger'); // Comment out if not available
 
 class BookingController {
