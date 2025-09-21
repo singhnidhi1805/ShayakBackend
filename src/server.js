@@ -8,6 +8,7 @@ const authRoutes = require('./routes/auth.routes');
 const professionalLocationRoutes = require('./routes/professional-location.routes');
 const servicemanagement = require('./routes/service-management.routes');
 const earningRoutes = require('./routes/earnings.routes');
+const paymentRoutes = require('./routes/payment.routes');
 const adminRoutes = require('./routes/admin.routes');
 const documentVerificationRoutes = require('./routes/document-verification.routes');
 const supportRoutes = require('./routes/support.routes');
@@ -25,16 +26,16 @@ const EnhancedSocketService = require('./services/socket.service');
 
 
 
-// CORS configuration for tracking
-const corsOptions = {
-  origin: process.env.CLIENT_URL || '*',
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
-};
+// // CORS configuration for tracking
+// const corsOptions = {
+//   origin: process.env.CLIENT_URL || '*',
+//   credentials: true,
+//   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+//   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+// };
 
-// Middleware
-app.use(cors(corsOptions));
+// // Middleware
+// app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -73,6 +74,7 @@ app.use('/api/professionals', professionalRoutes);
 app.use('/api/professionals', require('./routes/professional-onboarding.routes'));
 app.use('/api/professional', professionalLocationRoutes);
 app.use('/api/professional', earningRoutes);
+app.use('/api/payments', paymentRoutes);
 app.use('/api/professionals', require('./routes/document-verification.routes'));
 app.use('/api/location', require('./routes/location.routes'));
 app.use('/api', servicemanagement);

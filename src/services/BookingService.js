@@ -64,12 +64,19 @@ class BookingService {
       const verificationCode = this.generateVerificationCode();
       
       // Calculate total amount
-      let totalAmount = service.pricing?.basePrice || service.price || 0;
-      if (isEmergency) {
-        totalAmount += 200; // Emergency fee
-      }
+      // Calculate total amount - FIXED
+let totalAmount = service.pricing?.amount || 
+                  service.pricing?.basePrice || 
+                  service.price || 
+                  0;
+
+if (isEmergency) {
+  totalAmount += 200; // Emergency fee
+}
+
+console.log('💰 [BOOKING-SERVICE] Total amount calculated:', totalAmount);
       
-      console.log('💰 [BOOKING-SERVICE] Total amount:', totalAmount);
+      
       
       // Create booking
       const booking = new Booking({

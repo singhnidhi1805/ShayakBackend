@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 const Booking = require('../models/booking.model');
 const Service = require('../models/service.model');
 const Professional = require('../models/professional.model');
-const BookingService = require('../services/BookingService'); // Use exact filename
+const EnhancedBookingService = require('../services/BookingService'); // Use exact filename
 // const logger = require('../config/logger'); // Comment out if not available
 
 class BookingController {
@@ -183,15 +183,87 @@ async createBooking(req, res) {
     try {
       const { bookingId } = req.params;
       
-      if (!bookingId || !mongoose.Types.ObjectId.isValid(bookingId)) {
+      // CRITICAL: Enhanced booking ID validation
+      if (!bookingId) {
+        console.log('❌ [BOOKING-API] Missing booking ID');
+        return res.status(400).json({
+          success: false,
+          message: 'Booking ID is required'
+        });
+      }
+
+      if (typeof bookingId !== 'string' || bookingId.trim() === '') {
+        console.log('❌ [BOOKING-API] Invalid booking ID format:', typeof bookingId);
         return res.status(400).json({
           success: false,
           message: 'Valid booking ID is required'
         });
       }
 
-      console.log('🔧 [BOOKING-API] Processing booking acceptance...');
+      if (!mongoose.Types.ObjectId.isValid(bookingId)) {
+        console.log('❌ [BOOKING-API] Invalid MongoDB ObjectId:', bookingId);
+        return res.status(400).json({
+          success: false,
+          message: 'Valid booking ID is required'
+        });
+      }
 
+      // Enhanced professional validation
+      if (!req.user || !req.user._id) {
+        console.log('❌ [BOOKING-API] Missing professional user data');
+        return res.status(401).json({
+          success: false,
+          message: 'Professional authentication required'
+        });
+      }
+
+      console.log('🔧 [BOOKING-API] Processing booking acceptance...');
+      console.log('📊 [BOOKING-API] Validation passed for booking:', bookingId);
+
+      // Check if booking exists first
+      const existingBooking = await Booking.findById(bookingId)
+        .populate('service', 'name category')
+        .populate('user', 'name phone');
+
+      if (!existingBooking) {
+        console.log('❌ [BOOKING-API] Booking not found:', bookingId);
+        return res.status(404).json({
+          success: false,
+          message: 'Booking not found'
+        });
+      }
+
+      console.log('✅ [BOOKING-API] Booking found:', {
+        id: existingBooking._id,
+        status: existingBooking.status,
+        service: existingBooking.service?.name,
+        hasUser: !!existingBooking.user
+      });
+
+      // Check if booking is still available
+      if (existingBooking.status !== 'pending') {
+        console.log('❌ [BOOKING-API] Booking not available, status:', existingBooking.status);
+        return res.status(409).json({
+          success: false,
+          message: `Booking is already ${existingBooking.status}`
+        });
+      }
+
+      // Check if professional already has an active booking
+      const professionalActiveBooking = await Booking.findOne({
+        professional: req.user._id,
+        status: { $in: ['accepted', 'in_progress'] }
+      });
+
+      if (professionalActiveBooking) {
+        console.log('❌ [BOOKING-API] Professional already has active booking:', professionalActiveBooking._id);
+        return res.status(409).json({
+          success: false,
+          message: 'You already have an active booking. Please complete it first.'
+        });
+      }
+
+      // Use enhanced booking service
       const booking = await EnhancedBookingService.acceptBooking(bookingId, req.user._id);
 
       console.log('✅ [BOOKING-API] Booking accepted successfully');
@@ -238,29 +310,34 @@ async createBooking(req, res) {
       if (error.message.includes('not found')) {
         statusCode = 404;
         message = 'Booking not found';
-      } else if (error.message.includes('already') || error.message.includes('not available')) {
+      } else if (error.message.includes('already') || 
+                 error.message.includes('not available') ||
+                 error.message.includes('specialization')) {
         statusCode = 409;
         message = error.message;
-      } else if (error.message.includes('not authorized') || error.message.includes('specialization')) {
+      } else if (error.message.includes('not authorized')) {
         statusCode = 403;
         message = error.message;
+      } else if (error.name === 'ValidationError') {
+        statusCode = 400;
+        message = 'Invalid booking data';
       }
       
       res.status(statusCode).json({
         success: false,
         message: message,
-        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+        timestamp: new Date().toISOString()
       });
     }
   }
-
   /**
    * Get active booking
    */
   /**
  * Get active booking - OPTIMIZED VERSION with timeout handling
  */
-async getActiveBooking(req, res) {
+ async getActiveBooking(req, res) {
     console.log('🔍 [BOOKING-API] Getting active booking for user:', req.user._id);
     console.log('👤 [BOOKING-API] User role:', req.userRole);
     
@@ -290,7 +367,7 @@ async getActiveBooking(req, res) {
         .lean();
       
       const findTimeout = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Database query timeout')), 5000);
+        setTimeout(() => reject(new Error('Database query timeout')), 10000);
       });
       
       const booking = await Promise.race([findBookingPromise, findTimeout]);
@@ -303,11 +380,15 @@ async getActiveBooking(req, res) {
         });
       }
 
-      console.log('✅ [BOOKING-API] Active booking found:', booking._id);
+      console.log('✅ [BOOKING-API] Active booking found:', {
+        id: booking._id,
+        status: booking.status,
+        service: booking.service?.name
+      });
 
-      // Format response based on user role
+      // Format response based on user role with ID validation
       let response = {
-        _id: booking._id,
+        _id: booking._id.toString(), // Ensure string format
         service: booking.service,
         scheduledDate: booking.scheduledDate,
         status: booking.status,
@@ -315,13 +396,14 @@ async getActiveBooking(req, res) {
         location: booking.location,
         tracking: booking.tracking || {},
         isEmergency: booking.isEmergency || false,
-        createdAt: booking.createdAt
+        createdAt: booking.createdAt,
+        hasValidId: !!booking._id
       };
 
       // Add role-specific data
       if (req.userRole === 'user' && booking.professional) {
         response.professional = {
-          _id: booking.professional._id,
+          _id: booking.professional._id.toString(),
           name: booking.professional.name,
           phone: booking.professional.phone,
           rating: booking.professional.rating || 0,
@@ -345,7 +427,7 @@ async getActiveBooking(req, res) {
         }
       } else if (req.userRole === 'professional' && booking.user) {
         response.customer = {
-          _id: booking.user._id,
+          _id: booking.user._id.toString(),
           name: booking.user.name,
           phone: booking.user.phone
         };
@@ -362,7 +444,7 @@ async getActiveBooking(req, res) {
       });
       
     } catch (error) {
-      console.error('[BOOKING-API] Get active booking error:', error);
+      console.error('❌ [BOOKING-API] Get active booking error:', error);
       
       let errorMessage = 'Failed to get active booking';
       let statusCode = 500;
@@ -382,26 +464,31 @@ async getActiveBooking(req, res) {
       });
     }
   }
-
 /**
  * Get available bookings for professionals to accept
  */
  async getAvailableBookings(req, res) {
-    console.log('[BOOKING-API] Getting available bookings for professional:', req.user._id);
+    console.log('🔍 [BOOKING-API] Getting available bookings for professional:', req.user._id);
     
     try {
       const { specialization, radius = 50 } = req.query;
       
-      // Get professional details
+      // Get professional details with enhanced validation
       const professional = await Professional.findById(req.user._id).lean();
       if (!professional) {
+        console.log('❌ [BOOKING-API] Professional not found');
         return res.status(404).json({
           success: false,
           message: 'Professional not found'
         });
       }
 
-      console.log('[BOOKING-API] Professional specializations:', professional.specializations);
+      console.log('📊 [BOOKING-API] Professional details:', {
+        id: professional._id,
+        specializations: professional.specializations,
+        isAvailable: professional.isAvailable,
+        hasLocation: !!professional.currentLocation?.coordinates
+      });
 
       // Build query for available bookings
       let query = {
@@ -422,24 +509,26 @@ async getActiveBooking(req, res) {
         if (matchingServices.length > 0) {
           query.service = { $in: matchingServices.map(s => s._id) };
         } else {
+          console.log('📭 [BOOKING-API] No services match specializations');
           return res.json({
             success: true,
             bookings: [],
+            totalCount: 0,
             message: 'No services match your specializations'
           });
         }
       }
 
-      console.log('[BOOKING-API] Query:', JSON.stringify(query));
+      console.log('🔍 [BOOKING-API] Query:', JSON.stringify(query));
 
-      // Find available bookings
+      // Find available bookings with enhanced population
       let availableBookings = await Booking.find(query)
         .populate('service', 'name category pricing estimatedDuration')
         .populate('user', 'name phone')
         .sort({ isEmergency: -1, createdAt: 1 })
         .lean();
 
-      console.log(`[BOOKING-API] Found ${availableBookings.length} potential bookings`);
+      console.log(`📊 [BOOKING-API] Found ${availableBookings.length} potential bookings`);
 
       // Filter by location if professional has location
       if (professional.currentLocation?.coordinates && radius) {
@@ -462,38 +551,52 @@ async getActiveBooking(req, res) {
         availableBookings.sort((a, b) => (a.distanceFromYou || 0) - (b.distanceFromYou || 0));
       }
 
-      console.log(`[BOOKING-API] Final count after location filter: ${availableBookings.length}`);
+      console.log(`📊 [BOOKING-API] Final count after location filter: ${availableBookings.length}`);
 
-      // Format bookings for response
-      const formattedBookings = availableBookings.map(booking => ({
-        _id: booking._id,
-        service: booking.service,
-        customer: {
-          name: booking.user.name,
-          phone: booking.user.phone
-        },
-        scheduledDate: booking.scheduledDate,
-        location: booking.location,
-        status: booking.status,
-        totalAmount: booking.totalAmount,
-        isEmergency: booking.isEmergency,
-        distanceFromYou: booking.distanceFromYou,
-        estimatedETA: booking.estimatedETA,
-        createdAt: booking.createdAt
-      }));
+      // Format bookings for response with proper ID handling
+      const formattedBookings = availableBookings
+        .filter(booking => booking._id) // Ensure booking has valid ID
+        .map(booking => ({
+          _id: booking._id.toString(), // Ensure string format
+          service: booking.service,
+          customer: {
+            name: booking.user?.name || 'Customer',
+            phone: booking.user?.phone || ''
+          },
+          scheduledDate: booking.scheduledDate,
+          location: booking.location,
+          status: booking.status,
+          totalAmount: booking.totalAmount || 0,
+          isEmergency: booking.isEmergency || false,
+          distanceFromYou: booking.distanceFromYou,
+          estimatedETA: booking.estimatedETA,
+          createdAt: booking.createdAt,
+          // Add verification that ID exists
+          hasValidId: !!booking._id
+        }))
+        .filter(booking => booking.hasValidId); // Final filter for valid IDs
+
+      console.log(`✅ [BOOKING-API] Formatted ${formattedBookings.length} bookings with valid IDs`);
 
       res.json({
         success: true,
         bookings: formattedBookings,
         totalCount: formattedBookings.length,
-        professionalLocation: professional.currentLocation
+        professionalLocation: professional.currentLocation,
+        metadata: {
+          radius: radius,
+          specializations: specializationsToMatch,
+          timestamp: new Date().toISOString()
+        }
       });
 
     } catch (error) {
-      console.error('[BOOKING-API] Get available bookings error:', error);
+      console.error('❌ [BOOKING-API] Get available bookings error:', error);
       res.status(500).json({
         success: false,
-        message: 'Failed to get available bookings'
+        message: 'Failed to get available bookings',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+        timestamp: new Date().toISOString()
       });
     }
   }
@@ -502,7 +605,7 @@ async getActiveBooking(req, res) {
 /**
  * Calculate distance between two points using Haversine formula
  */
- calculateDistance(lat1, lon1, lat2, lon2) {
+calculateDistance(lat1, lon1, lat2, lon2) {
     const R = 6371; // Earth's radius in km
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLon = (lon2 - lon1) * Math.PI / 180;
@@ -518,11 +621,12 @@ async getActiveBooking(req, res) {
   /**
    * Utility method to calculate ETA
    */
-  calculateETA(distance, averageSpeed = 30) {
+calculateETA(distance, averageSpeed = 30) {
     if (!distance || distance <= 0) return 0;
     const timeInMinutes = Math.round((distance / averageSpeed) * 60);
     return Math.max(1, timeInMinutes);
   }
+
 
 
 /**
