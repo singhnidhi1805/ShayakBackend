@@ -268,6 +268,44 @@ async createBooking(req, res) {
 
       console.log('✅ [BOOKING-API] Booking accepted successfully');
 
+      const socketService = require('../services/socket.service');
+    const io = socketService.getIO();
+    
+    if (io) {
+      // Get professional's current location
+      const professional = await Professional.findById(req.user._id);
+      
+      if (professional && professional.currentLocation?.coordinates) {
+        // Calculate initial ETA
+        const distance = calculateDistance(
+          professional.currentLocation.coordinates[1],
+          professional.currentLocation.coordinates[0],
+          booking.location.coordinates[1],
+          booking.location.coordinates[0]
+        );
+        
+        const eta = Math.round((distance / 30) * 60);
+        
+        // Notify customer that professional accepted and provide initial location
+        io.to(`user:${booking.user}`).emit('bookingAccepted', {
+          bookingId: booking._id.toString(),
+          professional: {
+            _id: professional._id,
+            name: professional.name,
+            phone: professional.phone,
+            rating: professional.rating,
+            currentLocation: professional.currentLocation
+          },
+          initialETA: eta,
+          initialDistance: distance,
+          acceptedAt: new Date().toISOString(),
+          message: 'Professional accepted your booking'
+        });
+        
+        console.log(`✅ Booking acceptance notification sent to user ${booking.user}`);
+      }
+    }
+
       // Get updated booking with populated data for response
       const populatedBooking = await Booking.findById(bookingId)
         .populate('service', 'name category estimatedDuration')

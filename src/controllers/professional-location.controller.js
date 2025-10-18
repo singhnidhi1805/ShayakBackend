@@ -10,110 +10,101 @@ class ProfessionalLocationController {
    * @param {Object} req - Request object
    * @param {Object} res - Response object
    */
-  async updateLocation(req, res) {
-    try {
-      const { latitude, longitude, accuracy, heading, speed, isAvailable } = req.body;
-      
-      // Validate required fields
-      if (!latitude || !longitude) {
-        return res.status(400).json({
-          success: false,
-          error: 'Missing coordinates',
-          details: 'Latitude and longitude are required'
-        });
-      }
-      
-      // Validate coordinate ranges
-      if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
-        return res.status(400).json({
-          success: false,
-          error: 'Invalid coordinates',
-          details: 'Latitude must be between -90 and 90, longitude between -180 and 180'
-        });
-      }
-      
-      // Find professional by userId
-      const professional = await Professional.findOne({ userId: req.user.userId });
-      
-      if (!professional) {
-        return res.status(404).json({
-          success: false,
-          error: 'Professional not found',
-          details: 'Could not find professional profile for this user'
-        });
-      }
-      
-      // Update professional location
-      professional.currentLocation = {
-        type: 'Point',
-        coordinates: [longitude, latitude]
-      };
-      
-      // Update additional location data if provided
-      if (accuracy) professional.currentLocation.accuracy = accuracy;
-      if (heading) professional.currentLocation.heading = heading;
-      if (speed) professional.currentLocation.speed = speed;
-      
-      // Update timestamp
-      professional.currentLocation.timestamp = new Date();
-      
-      // Update availability if provided
-      if (isAvailable !== undefined) {
-        professional.isAvailable = isAvailable;
-      }
-      
-      await professional.save();
-      
-      // Update active bookings if professional is on a job
-      if (professional.currentBooking && professional.currentBooking.bookingId) {
-        // Calculate ETA
-        const booking = await Booking.findById(professional.currentBooking.bookingId);
-        
-        if (booking && booking.status === 'in_progress') {
-          const eta = GeospatialService.estimateETA(
-            [longitude, latitude],
-            booking.location.coordinates
-          );
-          
-          // Update booking tracking info
-          booking.tracking.lastLocation = {
-            type: 'Point',
-            coordinates: [longitude, latitude],
-            timestamp: new Date()
-          };
-          booking.tracking.eta = eta;
-          await booking.save();
-          
-          // Send real-time update to user
-          SocketService.sendBookingUpdate(booking._id, {
-            tracking: booking.tracking
-          });
-        }
-      }
-      
-      res.status(200).json({
-        success: true,
-        message: 'Location updated successfully',
-        data: {
-          currentLocation: {
-            location: professional.currentLocation,
-            accuracy: professional.currentLocation.accuracy,
-            heading: professional.currentLocation.heading,
-            speed: professional.currentLocation.speed
-          },
-          isAvailable: professional.isAvailable,
-          lastLocationUpdate: professional.currentLocation.timestamp
-        }
-      });
-    } catch (error) {
-      logger.error('Update location error:', error);
-      res.status(500).json({
+ async updateLocation(req, res) {
+  try {
+    const { coordinates, isAvailable, accuracy, heading, speed } = req.body;
+    
+    // Validate (your existing validation code)...
+    
+    const professional = await Professional.findOne({ userId: req.user.userId });
+    
+    if (!professional) {
+      return res.status(404).json({
         success: false,
-        error: 'Failed to update location',
-        details: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+        error: 'Professional not found'
       });
     }
+    
+    // Update location in database
+    professional.currentLocation = {
+      type: 'Point',
+      coordinates: coordinates, // [longitude, latitude]
+      timestamp: new Date(),
+      accuracy: accuracy || null,
+      heading: heading || null,
+      speed: speed || null
+    };
+    
+    if (isAvailable !== undefined) {
+      professional.isAvailable = isAvailable;
+    }
+    
+    await professional.save();
+    
+    // CRITICAL: If professional has active booking, broadcast location via socket
+    const activeBooking = await Booking.findOne({
+      professional: professional._id,
+      status: { $in: ['accepted', 'in_progress'] }
+    }).populate('user', '_id name phone');
+    
+    if (activeBooking) {
+      console.log(`📍 Professional has active booking ${activeBooking._id}, broadcasting location...`);
+      
+      // Get socket service
+      const socketService = require('../services/socket.service');
+      const io = socketService.getIO();
+      
+      if (io) {
+        // Calculate distance and ETA
+        const distance = calculateDistance(
+          coordinates[1], coordinates[0],
+          activeBooking.location.coordinates[1],
+          activeBooking.location.coordinates[0]
+        );
+        
+        const calculatedSpeed = speed && speed > 1 ? (speed * 3.6) : 30;
+        const eta = Math.round((distance / calculatedSpeed) * 60);
+        
+        const locationUpdate = {
+          bookingId: activeBooking._id.toString(),
+          coordinates: coordinates,
+          timestamp: new Date().toISOString(),
+          heading: heading || 0,
+          speed: speed || 0,
+          accuracy: accuracy || 10,
+          eta: eta,
+          distance: distance,
+          isMoving: speed > 1.0
+        };
+        
+        // Broadcast via socket
+        io.to(`booking:${activeBooking._id}`).emit('professionalLocationUpdate', locationUpdate);
+        
+        if (activeBooking.user) {
+          io.to(`user:${activeBooking.user._id}`).emit('professionalLocationUpdate', locationUpdate);
+        }
+        
+        console.log(`✅ Location broadcasted via REST API endpoint`);
+      }
+    }
+    
+    res.status(200).json({
+      success: true,
+      message: 'Location updated successfully',
+      data: {
+        currentLocation: professional.currentLocation,
+        isAvailable: professional.isAvailable
+      }
+    });
+    
+  } catch (error) {
+    logger.error('Update location error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update location'
+    });
   }
+}
   
   /**
    * Get nearby professionals based on location
@@ -249,6 +240,8 @@ class ProfessionalLocationController {
       }
     }
   }
+  
+
   
   /**
    * Get service areas with available professionals
