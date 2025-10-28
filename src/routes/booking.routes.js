@@ -4,6 +4,7 @@ const router = express.Router();
 const auth = require('../middleware/auth.middleware');
 const BookingController = require('../controllers/booking.controller');
 
+
 /**
  * @swagger
  * components:
@@ -945,6 +946,117 @@ router.get('/:bookingId',
   auth(), 
   BookingController.getBookingById.bind(BookingController)
 );
+
+/**
+ * @swagger
+ * /api/bookings/completion/send-otp:
+ *   post:
+ *     summary: Send OTP to customer for service completion verification
+ *     tags:
+ *       - Bookings
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - bookingId
+ *             properties:
+ *               bookingId:
+ *                 type: string
+ *                 description: ID of the booking to complete
+ *     responses:
+ *       200:
+ *         description: OTP sent successfully
+ *       404:
+ *         description: Booking not found
+ *       500:
+ *         description: Server error
+ */
+router.post(
+  '/completion/send-otp',
+   auth(['professional']), 
+  BookingController.sendServiceCompletionOTP
+);
+
+/**
+ * @swagger
+ * /api/bookings/completion/verify-otp:
+ *   post:
+ *     summary: Verify OTP and mark service as completed
+ *     tags:
+ *       - Bookings
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - bookingId
+ *               - otp
+ *             properties:
+ *               bookingId:
+ *                 type: string
+ *                 description: ID of the booking
+ *               otp:
+ *                 type: string
+ *                 description: OTP code received from customer
+ *     responses:
+ *       200:
+ *         description: Service completed successfully
+ *       400:
+ *         description: Invalid OTP
+ *       404:
+ *         description: Booking not found
+ *       500:
+ *         description: Server error
+ */
+router.post(
+  '/completion/verify-otp',
+   auth(['professional']), 
+  BookingController.verifyServiceCompletionOTP
+);
+
+/**
+ * @swagger
+ * /api/bookings/completion/resend-otp:
+ *   post:
+ *     summary: Resend OTP for service completion
+ *     tags:
+ *       - Bookings
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - bookingId
+ *             properties:
+ *               bookingId:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: OTP resent successfully
+ *       404:
+ *         description: Booking not found
+ *       500:
+ *         description: Server error
+ */
+router.post(
+  '/completion/resend-otp',
+  auth(['professional']), 
+  BookingController.resendServiceCompletionOTP
+);
+
 
 
 module.exports = router;

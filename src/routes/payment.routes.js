@@ -483,4 +483,272 @@ router.get('/commission/dues', auth(['professional']), PaymentController.getComm
  */
 router.post('/commission/pay', auth(['professional']), PaymentController.payCommission.bind(PaymentController));
 
+/**
+ * @swagger
+ * /api/payments/razorpay/create-order:
+ *   post:
+ *     summary: Create Razorpay order for online payment
+ *     tags:
+ *       - Payments
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - bookingId
+ *               - amount
+ *               - serviceAmount
+ *             properties:
+ *               bookingId:
+ *                 type: string
+ *               amount:
+ *                 type: number
+ *               serviceAmount:
+ *                 type: number
+ *               additionalCharges:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   properties:
+ *                     description:
+ *                       type: string
+ *                     amount:
+ *                       type: number
+ */
+router.post(
+  '/razorpay/create-order',
+ auth(['professional']),
+  PaymentController.createRazorpayOrder
+);
+
+/**
+ * @swagger
+ * /api/payments/razorpay/verify:
+ *   post:
+ *     summary: Verify Razorpay payment
+ *     tags:
+ *       - Payments
+ *     security:
+ *       - bearerAuth: []
+ */
+router.post(
+  '/razorpay/verify',
+ auth(['professional']),
+  PaymentController.verifyRazorpayPayment
+);
+
+// ============ UPI Payment Routes ============
+
+/**
+ * @swagger
+ * /api/payments/company-upi/process:
+ *   post:
+ *     summary: Process company UPI payment
+ *     tags:
+ *       - Payments
+ *     security:
+ *       - bearerAuth: []
+ */
+router.post(
+  '/company-upi/process',
+ auth(['professional']),
+
+  PaymentController.processCompanyUPIPayment
+);
+
+/**
+ * @swagger
+ * /api/payments/professional-upi/process:
+ *   post:
+ *     summary: Process professional UPI payment
+ *     tags:
+ *       - Payments
+ *     security:
+ *       - bearerAuth: []
+ */
+router.post(
+  '/professional-upi/process',
+ auth(['professional']),
+  PaymentController.processProfessionalUPIPayment
+);
+
+// ============ Cash Payment Routes ============
+
+/**
+ * @swagger
+ * /api/payments/cash/process:
+ *   post:
+ *     summary: Process cash payment
+ *     tags:
+ *       - Payments
+ *     security:
+ *       - bearerAuth: []
+ */
+router.post(
+  '/cash/process',
+ auth(['professional']),
+
+  PaymentController.processCashPayment
+);
+
+// ============ Commission Routes ============
+
+/**
+ * @swagger
+ * /api/payments/commission/dues:
+ *   get:
+ *     summary: Get commission dues for professional
+ *     tags:
+ *       - Payments
+ *     security:
+ *       - bearerAuth: []
+ */
+router.get(
+  '/commission/dues',
+ auth(['professional']),
+ 
+  PaymentController.getCommissionDues
+);
+
+/**
+ * @swagger
+ * /api/payments/commission/dues/{professionalId}:
+ *   get:
+ *     summary: Get commission dues for specific professional (Admin)
+ *     tags:
+ *       - Payments
+ *     security:
+ *       - bearerAuth: []
+ */
+router.get(
+  '/commission/dues/:professionalId',
+auth(['admin']),
+  // Add isAdmin middleware if you have it
+  PaymentController.getCommissionDues
+);
+
+// ============ General Payment Routes ============
+
+/**
+ * @swagger
+ * /api/payments/{paymentId}:
+ *   get:
+ *     summary: Get payment details
+ *     tags:
+ *       - Payments
+ *     security:
+ *       - bearerAuth: []
+ */
+router.get(
+  '/:paymentId',
+ auth(['professional']),
+  PaymentController.getPaymentDetails
+);
+
+/**
+ * @swagger
+ * /api/payments/booking/{bookingId}/summary:
+ *   get:
+ *     summary: Get payment summary for booking
+ *     tags:
+ *       - Payments
+ *     security:
+ *       - bearerAuth: []
+ */
+router.get(
+  '/booking/:bookingId/summary',
+ auth(['professional']),
+  PaymentController.getPaymentSummary
+);
+
+/**
+ * @swagger
+ * /api/payments/professional/{professionalId}/payment-method:
+ *   get:
+ *     summary: Get professional's payment method (for customers)
+ *     tags:
+ *       - Payments
+ *     security:
+ *       - bearerAuth: []
+ */
+router.get(
+  '/professional/:professionalId/payment-method',
+auth(['professional']),
+  PaymentController.getProfessionalPaymentMethod
+);
+
+// ============ Payment Method Management (Professional) ============
+
+/**
+ * @swagger
+ * /api/payments/payment-methods:
+ *   post:
+ *     summary: Add payment method
+ *     tags:
+ *       - Payment Methods
+ *     security:
+ *       - bearerAuth: []
+ */
+router.post(
+  '/payment-methods',
+ auth(['professional']),
+
+  PaymentController.addPaymentMethod
+);
+
+/**
+ * @swagger
+ * /api/payments/payment-methods:
+ *   get:
+ *     summary: Get all payment methods
+ *     tags:
+ *       - Payment Methods
+ *     security:
+ *       - bearerAuth: []
+ */
+router.get(
+  '/payment-methods',
+ auth(['professional']),
+
+  PaymentController.getPaymentMethods
+);
+
+/**
+ * @swagger
+ * /api/payments/payment-methods/{paymentMethodId}:
+ *   put:
+ *     summary: Update payment method
+ *     tags:
+ *       - Payment Methods
+ *     security:
+ *       - bearerAuth: []
+ */
+router.put(
+  '/payment-methods/:paymentMethodId',
+ auth(['professional']),
+ 
+  PaymentController.updatePaymentMethod
+);
+
+/**
+ * @swagger
+ * /api/payments/payment-methods/{paymentMethodId}:
+ *   delete:
+ *     summary: Delete payment method
+ *     tags:
+ *       - Payment Methods
+ *     security:
+ *       - bearerAuth: []
+ */
+router.delete(
+  '/payment-methods/:paymentMethodId',
+auth(['professional']),
+
+  PaymentController.deletePaymentMethod
+);
+
 module.exports = router;

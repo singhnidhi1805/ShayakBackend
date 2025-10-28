@@ -427,6 +427,308 @@ async completeBooking(req, res) {
     }
   }
   
+
+  async getPaymentDetails(req, res) {
+  try {
+    const { paymentId } = req.params;
+
+    const payment = await Payment.findById(paymentId)
+      .populate('booking')
+      .populate('professional', 'name email phone userId')
+      .populate('user', 'name email phone');
+
+    if (!payment) {
+      return res.status(404).json({
+        success: false,
+        message: 'Payment not found',
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      payment,
+    });
+  } catch (error) {
+    console.error('Get payment details error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch payment details',
+      error: error.message,
+    });
+  }
+}
+
+/**
+ * Get payment summary for booking
+ */
+async getPaymentSummary(req, res) {
+  try {
+    const { bookingId } = req.params;
+
+    const payment = await Payment.findOne({ booking: bookingId })
+      .populate('professional', 'name userId')
+      .populate('user', 'name');
+
+    if (!payment) {
+      return res.status(404).json({
+        success: false,
+        message: 'Payment not found for this booking',
+      });
+    }
+
+    const summary = {
+      paymentId: payment._id,
+      status: payment.status,
+      paymentMethod: payment.paymentMethod,
+      totalAmount: payment.totalAmount,
+      serviceAmount: payment.serviceAmount,
+      additionalAmount: payment.additionalAmount,
+      platformCommission: payment.platformCommission,
+      professionalPayout: payment.professionalPayout,
+      commissionStatus: payment.commissionStatus,
+      commissionDueDate: payment.commissionDueDate,
+      completedAt: payment.completedAt,
+      professional: {
+        name: payment.professional.name,
+        userId: payment.professional.userId,
+      },
+      customer: {
+        name: payment.user.name,
+      },
+    };
+
+    res.status(200).json({
+      success: true,
+      summary,
+    });
+  } catch (error) {
+    console.error('Get payment summary error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch payment summary',
+      error: error.message,
+    });
+  }
+}
+
+/**
+ * Get professional's payment method (for customer to pay)
+ */
+async getProfessionalPaymentMethod(req, res) {
+  try {
+    const { professionalId } = req.params;
+
+    const paymentMethod = await PaymentMethod.findOne({
+      professional: professionalId,
+      type: 'upi',
+      isActive: true,
+      isVerified: true,
+    });
+
+    if (!paymentMethod) {
+      return res.status(404).json({
+        success: false,
+        message: 'Professional has not added UPI payment method',
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      upiId: paymentMethod.upiId,
+      name: paymentMethod.name,
+    });
+  } catch (error) {
+    console.error('Get professional payment method error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch payment method',
+      error: error.message,
+    });
+  }
+}
+
+/**
+ * Add payment method for professional
+ */
+async addPaymentMethod(req, res) {
+  try {
+    const professionalId = req.user.professionalId;
+    const { type, name, upiId, accountNumber, bankName, ifscCode, branchName } = req.body;
+
+    // Validate based on type
+    if (type === 'upi' && !upiId) {
+      return res.status(400).json({
+        success: false,
+        message: 'UPI ID is required for UPI payment method',
+      });
+    }
+
+    if (type === 'bank_account' && (!accountNumber || !bankName || !ifscCode)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Account number, bank name, and IFSC code are required for bank account',
+      });
+    }
+
+    // Check if professional already has a default method
+    const existingDefault = await PaymentMethod.findOne({
+      professional: professionalId,
+      isDefault: true,
+    });
+
+    // Create payment method
+    const paymentMethod = await PaymentMethod.create({
+      professional: professionalId,
+      type,
+      name,
+      upiId: type === 'upi' ? upiId : undefined,
+      accountNumber: type === 'bank_account' ? accountNumber : undefined,
+      bankName: type === 'bank_account' ? bankName : undefined,
+      ifscCode: type === 'bank_account' ? ifscCode : undefined,
+      branchName: type === 'bank_account' ? branchName : undefined,
+      isDefault: !existingDefault, // Set as default if no default exists
+      isActive: true,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Payment method added successfully',
+      paymentMethod,
+    });
+  } catch (error) {
+    console.error('Add payment method error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to add payment method',
+      error: error.message,
+    });
+  }
+}
+
+/**
+ * Get professional's payment methods
+ */
+async getPaymentMethods(req, res) {
+  try {
+    const professionalId = req.user.professionalId;
+
+    const paymentMethods = await PaymentMethod.find({
+      professional: professionalId,
+      isActive: true,
+    }).sort({ isDefault: -1, createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      paymentMethods,
+    });
+  } catch (error) {
+    console.error('Get payment methods error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch payment methods',
+      error: error.message,
+    });
+  }
+}
+
+/**
+ * Update payment method
+ */
+async updatePaymentMethod(req, res) {
+  try {
+    const professionalId = req.user.professionalId;
+    const { paymentMethodId } = req.params;
+    const updates = req.body;
+
+    const paymentMethod = await PaymentMethod.findOne({
+      _id: paymentMethodId,
+      professional: professionalId,
+    });
+
+    if (!paymentMethod) {
+      return res.status(404).json({
+        success: false,
+        message: 'Payment method not found',
+      });
+    }
+
+    // If setting as default, unset other defaults
+    if (updates.isDefault === true) {
+      await PaymentMethod.updateMany(
+        { professional: professionalId, _id: { $ne: paymentMethodId } },
+        { isDefault: false }
+      );
+    }
+
+    Object.assign(paymentMethod, updates);
+    await paymentMethod.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Payment method updated successfully',
+      paymentMethod,
+    });
+  } catch (error) {
+    console.error('Update payment method error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update payment method',
+      error: error.message,
+    });
+  }
+}
+
+/**
+ * Delete payment method
+ */
+async deletePaymentMethod(req, res) {
+  try {
+    const professionalId = req.user.professionalId;
+    const { paymentMethodId } = req.params;
+
+    const paymentMethod = await PaymentMethod.findOne({
+      _id: paymentMethodId,
+      professional: professionalId,
+    });
+
+    if (!paymentMethod) {
+      return res.status(404).json({
+        success: false,
+        message: 'Payment method not found',
+      });
+    }
+
+    // Soft delete
+    paymentMethod.isActive = false;
+    await paymentMethod.save();
+
+    // If it was default, set another as default
+    if (paymentMethod.isDefault) {
+      const nextMethod = await PaymentMethod.findOne({
+        professional: professionalId,
+        isActive: true,
+        _id: { $ne: paymentMethodId },
+      });
+
+      if (nextMethod) {
+        nextMethod.isDefault = true;
+        await nextMethod.save();
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Payment method deleted successfully',
+    });
+  } catch (error) {
+    console.error('Delete payment method error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete payment method',
+      error: error.message,
+    });
+  }
+}
   /**
    * Get payment summary for a booking
    */
@@ -596,6 +898,452 @@ async completeBooking(req, res) {
       });
     }
   }
+
+  async createRazorpayOrder(req, res) {
+    try {
+      const { bookingId, amount, serviceAmount, additionalCharges = [] } = req.body;
+      
+      // Find booking
+      const booking = await Booking.findById(bookingId)
+        .populate('user')
+        .populate('professional');
+      
+      if (!booking) {
+        return res.status(404).json({
+          success: false,
+          message: 'Booking not found',
+        });
+      }
+
+      // Calculate breakdown
+      const breakdown = this.calculatePaymentBreakdown(
+        serviceAmount,
+        additionalCharges
+      );
+
+      // Create payment record
+      const payment = await Payment.create({
+        booking: bookingId,
+        professional: booking.professional._id,
+        user: booking.user._id,
+        serviceAmount,
+        additionalAmount: breakdown.additionalAmount,
+        totalAmount: breakdown.totalAmount,
+        platformCommission: breakdown.platformCommission,
+        professionalPayout: breakdown.professionalPayout,
+        paymentMethod: 'online',
+        paymentType: 'razorpay',
+        additionalCharges,
+        status: 'pending',
+      });
+
+      // Create Razorpay order
+      const options = {
+        amount: Math.round(breakdown.totalAmount * 100), // Amount in paise
+        currency: 'INR',
+        receipt: `rcpt_${payment._id}`,
+        notes: {
+          bookingId: bookingId,
+          paymentId: payment._id.toString(),
+        },
+      };
+
+      const razorpayOrder = await razorpay.orders.create(options);
+
+      // Update payment with Razorpay order ID
+      payment.razorpayOrderId = razorpayOrder.id;
+      await payment.save();
+
+      res.status(200).json({
+        success: true,
+        orderId: razorpayOrder.id,
+        amount: breakdown.totalAmount,
+        razorpayKeyId: process.env.RAZORPAY_KEY_ID,
+        customerEmail: booking.user.email,
+        customerPhone: booking.user.phone,
+        customerName: booking.user.name,
+        paymentId: payment._id,
+      });
+    } catch (error) {
+      console.error('Create Razorpay order error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to create payment order',
+        error: error.message,
+      });
+    }
+  }
+
+  // Verify Razorpay payment
+  async verifyRazorpayPayment(req, res) {
+    try {
+      const {
+        bookingId,
+        orderId,
+        paymentId,
+        signature,
+        amount,
+      } = req.body;
+
+      // Verify signature
+      const generatedSignature = crypto
+        .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+        .update(`${orderId}|${paymentId}`)
+        .digest('hex');
+
+      if (generatedSignature !== signature) {
+        return res.status(400).json({
+          success: false,
+          message: 'Payment verification failed',
+        });
+      }
+
+      // Find payment
+      const payment = await Payment.findOne({
+        booking: bookingId,
+        razorpayOrderId: orderId,
+      });
+
+      if (!payment) {
+        return res.status(404).json({
+          success: false,
+          message: 'Payment not found',
+        });
+      }
+
+      // Update payment
+      payment.razorpayPaymentId = paymentId;
+      payment.razorpaySignature = signature;
+      payment.status = 'completed';
+      payment.completedAt = new Date();
+      await payment.save();
+
+      // Update booking status
+      await Booking.findByIdAndUpdate(bookingId, {
+        paymentStatus: 'completed',
+        status: 'completed',
+      });
+
+      res.status(200).json({
+        success: true,
+        message: 'Payment verified successfully',
+        paymentId: payment._id,
+        professionalPayout: payment.professionalPayout,
+      });
+    } catch (error) {
+      console.error('Verify Razorpay payment error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Payment verification failed',
+        error: error.message,
+      });
+    }
+  }
+
+  // Process company UPI payment
+  async processCompanyUPIPayment(req, res) {
+    try {
+      const {
+        bookingId,
+        serviceAmount,
+        additionalCharges = [],
+        transactionId,
+      } = req.body;
+
+      // Find booking
+      const booking = await Booking.findById(bookingId)
+        .populate('user')
+        .populate('professional');
+
+      if (!booking) {
+        return res.status(404).json({
+          success: false,
+          message: 'Booking not found',
+        });
+      }
+
+      // Calculate breakdown
+      const breakdown = this.calculatePaymentBreakdown(
+        serviceAmount,
+        additionalCharges
+      );
+
+      // Create payment record
+      const payment = await Payment.create({
+        booking: bookingId,
+        professional: booking.professional._id,
+        user: booking.user._id,
+        serviceAmount,
+        additionalAmount: breakdown.additionalAmount,
+        totalAmount: breakdown.totalAmount,
+        platformCommission: breakdown.platformCommission,
+        professionalPayout: breakdown.professionalPayout,
+        paymentMethod: 'upi',
+        paymentType: 'upi_direct',
+        upiTransactionId: transactionId,
+        upiId: 'company@shayakpartner',
+        additionalCharges,
+        status: 'completed',
+        completedAt: new Date(),
+        commissionStatus: 'collected', // Commission auto-collected
+      });
+
+      // Update booking
+      await Booking.findByIdAndUpdate(bookingId, {
+        paymentStatus: 'completed',
+        status: 'completed',
+      });
+
+      res.status(200).json({
+        success: true,
+        message: 'Company UPI payment processed successfully',
+        paymentId: payment._id,
+        professionalPayout: payment.professionalPayout,
+      });
+    } catch (error) {
+      console.error('Process company UPI payment error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to process payment',
+        error: error.message,
+      });
+    }
+  }
+
+  // Process professional UPI payment
+  async processProfessionalUPIPayment(req, res) {
+    try {
+      const {
+        bookingId,
+        serviceAmount,
+        additionalCharges = [],
+      } = req.body;
+
+      // Find booking
+      const booking = await Booking.findById(bookingId)
+        .populate('user')
+        .populate('professional');
+
+      if (!booking) {
+        return res.status(404).json({
+          success: false,
+          message: 'Booking not found',
+        });
+      }
+
+      // Get professional's UPI ID
+      const paymentMethod = await PaymentMethod.findOne({
+        professional: booking.professional._id,
+        type: 'upi',
+        isActive: true,
+      });
+
+      if (!paymentMethod) {
+        return res.status(404).json({
+          success: false,
+          message: 'Professional UPI ID not found',
+        });
+      }
+
+      // Calculate breakdown
+      const breakdown = this.calculatePaymentBreakdown(
+        serviceAmount,
+        additionalCharges
+      );
+
+      // Calculate commission due date (7 days from now)
+      const commissionDueDate = new Date();
+      commissionDueDate.setDate(commissionDueDate.getDate() + 7);
+
+      // Create payment record
+      const payment = await Payment.create({
+        booking: bookingId,
+        professional: booking.professional._id,
+        user: booking.user._id,
+        serviceAmount,
+        additionalAmount: breakdown.additionalAmount,
+        totalAmount: breakdown.totalAmount,
+        platformCommission: breakdown.platformCommission,
+        professionalPayout: breakdown.professionalPayout,
+        paymentMethod: 'upi',
+        paymentType: 'upi_direct',
+        upiId: paymentMethod.upiId,
+        additionalCharges,
+        status: 'completed',
+        completedAt: new Date(),
+        commissionStatus: 'pending',
+        commissionDueDate,
+      });
+
+      // Update booking
+      await Booking.findByIdAndUpdate(bookingId, {
+        paymentStatus: 'completed',
+        status: 'completed',
+      });
+
+      res.status(200).json({
+        success: true,
+        message: 'Professional UPI payment processed successfully',
+        paymentId: payment._id,
+        commissionDue: payment.platformCommission,
+        commissionDueDate,
+        professionalUpiId: paymentMethod.upiId,
+      });
+    } catch (error) {
+      console.error('Process professional UPI payment error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to process payment',
+        error: error.message,
+      });
+    }
+  }
+
+  // Process cash payment
+  async processCashPayment(req, res) {
+    try {
+      const {
+        bookingId,
+        serviceAmount,
+        additionalCharges = [],
+        amount,
+      } = req.body;
+
+      // Find booking
+      const booking = await Booking.findById(bookingId)
+        .populate('user')
+        .populate('professional');
+
+      if (!booking) {
+        return res.status(404).json({
+          success: false,
+          message: 'Booking not found',
+        });
+      }
+
+      // Calculate breakdown
+      const breakdown = this.calculatePaymentBreakdown(
+        serviceAmount,
+        additionalCharges
+      );
+
+      // Calculate commission due date (7 days from now)
+      const commissionDueDate = new Date();
+      commissionDueDate.setDate(commissionDueDate.getDate() + 7);
+
+      // Create payment record
+      const payment = await Payment.create({
+        booking: bookingId,
+        professional: booking.professional._id,
+        user: booking.user._id,
+        serviceAmount,
+        additionalAmount: breakdown.additionalAmount,
+        totalAmount: breakdown.totalAmount,
+        platformCommission: breakdown.platformCommission,
+        professionalPayout: breakdown.professionalPayout,
+        paymentMethod: 'cash',
+        paymentType: 'cash_on_delivery',
+        additionalCharges,
+        status: 'completed',
+        completedAt: new Date(),
+        cashCollected: true,
+        cashCollectedAt: new Date(),
+        commissionStatus: 'pending',
+        commissionDueDate,
+      });
+
+      // Update booking
+      await Booking.findByIdAndUpdate(bookingId, {
+        paymentStatus: 'completed',
+        status: 'completed',
+      });
+
+      res.status(200).json({
+        success: true,
+        message: 'Cash payment processed successfully',
+        paymentId: payment._id,
+        commissionDue: payment.platformCommission,
+        commissionDueDate,
+      });
+    } catch (error) {
+      console.error('Process cash payment error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to process cash payment',
+        error: error.message,
+      });
+    }
+  }
+
+  // Get commission dues for professional
+  async getCommissionDues(req, res) {
+    try {
+      const professionalId = req.user.professionalId || req.params.professionalId;
+
+      const dues = await Payment.find({
+        professional: professionalId,
+        commissionStatus: 'pending',
+        status: 'completed',
+      }).populate('booking');
+
+      const totalCommissionDue = dues.reduce(
+        (sum, payment) => sum + payment.platformCommission,
+        0
+      );
+
+      const overduePayments = dues.filter(
+        (payment) => new Date() > new Date(payment.commissionDueDate)
+      );
+
+      const overdueAmount = overduePayments.reduce(
+        (sum, payment) => sum + payment.platformCommission,
+        0
+      );
+
+      res.status(200).json({
+        success: true,
+        totalCommissionDue,
+        overdueAmount,
+        pendingPayments: dues.length,
+        dues: dues.map((payment) => ({
+          id: payment._id,
+          bookingId: payment.booking._id,
+          amount: payment.platformCommission,
+          dueDate: payment.commissionDueDate,
+          isOverdue: new Date() > new Date(payment.commissionDueDate),
+          paymentDate: payment.completedAt,
+        })),
+      });
+    } catch (error) {
+      console.error('Get commission dues error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch commission dues',
+        error: error.message,
+      });
+    }
+  }
+
+  // Helper function to calculate payment breakdown
+  calculatePaymentBreakdown(serviceAmount, additionalCharges = [], commissionRate = 0.15) {
+    const additionalAmount = additionalCharges.reduce(
+      (sum, charge) => sum + charge.amount,
+      0
+    );
+    const totalAmount = serviceAmount + additionalAmount;
+    const platformCommission = Math.round(totalAmount * commissionRate * 100) / 100;
+    const professionalPayout = Math.round((totalAmount - platformCommission) * 100) / 100;
+
+    return {
+      serviceAmount,
+      additionalAmount,
+      totalAmount,
+      platformCommission,
+      professionalPayout,
+      commissionRate,
+    };
+  }
+
 }
 
 module.exports = new PaymentController();

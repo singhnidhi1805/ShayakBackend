@@ -1,3 +1,4 @@
+
 const mongoose = require('mongoose');
 
 const bookingSchema = new mongoose.Schema({
@@ -31,8 +32,8 @@ const bookingSchema = new mongoose.Schema({
       validate: {
         validator: function(coordinates) {
           return coordinates.length === 2 && 
-                 coordinates[0] >= -180 && coordinates[0] <= 180 && // longitude
-                 coordinates[1] >= -90 && coordinates[1] <= 90;     // latitude
+                 coordinates[0] >= -180 && coordinates[0] <= 180 &&
+                 coordinates[1] >= -90 && coordinates[1] <= 90;
         },
         message: 'Coordinates must be [longitude, latitude] within valid ranges'
       }
@@ -55,9 +56,35 @@ const bookingSchema = new mongoose.Schema({
     type: String,
     required: true
   },
-  // Enhanced tracking object
+  
+  // ========== NEW: Service Completion OTP Fields ==========
+  completionOTPSession: {
+    type: String,
+    index: true
+  },
+  completionOTPSentAt: {
+    type: Date
+  },
+  completionOTPVerifiedAt: {
+    type: Date
+  },
+  completionOTPAttempts: {
+    type: Number,
+    default: 0
+  },
+  // ========== End New Fields ==========
+  
+  // Additional charges (for extra work)
+  additionalCharges: [{
+    description: String,
+    amount: Number,
+    addedAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
+  
   tracking: {
-    // Basic tracking info
     isActive: {
       type: Boolean,
       default: false
@@ -65,8 +92,6 @@ const bookingSchema = new mongoose.Schema({
     trackingInitialized: Date,
     trackingStarted: Date,
     trackingEnded: Date,
-    
-    // Professional location tracking
     lastLocation: {
       type: {
         type: String,
@@ -79,17 +104,13 @@ const bookingSchema = new mongoose.Schema({
       heading: Number,
       speed: Number
     },
-    
-    // ETA and distance calculations
-    initialETA: Number,        // Initial ETA when booking accepted
-    eta: Number,               // Current ETA
-    initialDistance: Number,   // Initial distance when booking accepted
-    distance: Number,          // Current distance
-    
-    // Timeline events
-    startedAt: Date,           // When service started
-    arrivedAt: Date,           // When professional arrived
-    arrivalLocation: {         // Location where professional arrived
+    initialETA: Number,
+    eta: Number,
+    initialDistance: Number,
+    distance: Number,
+    startedAt: Date,
+    arrivedAt: Date,
+    arrivalLocation: {
       type: {
         type: String,
         enum: ['Point'],
@@ -98,15 +119,13 @@ const bookingSchema = new mongoose.Schema({
       coordinates: [Number],
       timestamp: Date
     },
-    
-    // Additional tracking data
     liveTrackingEnabled: {
       type: Boolean,
       default: false
     },
-    lastUpdate: Date,          // Last tracking update
-    totalTravelTime: Number,   // Total travel time in minutes
-    averageSpeed: Number       // Average speed during travel
+    lastUpdate: Date,
+    totalTravelTime: Number,
+    averageSpeed: Number
   },
   
   rating: {
@@ -120,7 +139,7 @@ const bookingSchema = new mongoose.Schema({
   },
   paymentStatus: {
     type: String,
-    enum: ['pending', 'paid', 'refunded'],
+    enum: ['pending', 'paid', 'refunded', 'completed'],
     default: 'pending'
   },
   completedAt: Date,
@@ -166,8 +185,9 @@ bookingSchema.index({ status: 1, scheduledDate: 1 });
 bookingSchema.index({ 'tracking.lastLocation': '2dsphere' });
 bookingSchema.index({ createdAt: -1 });
 bookingSchema.index({ isEmergency: -1, createdAt: 1 });
+bookingSchema.index({ completionOTPSession: 1 }); // NEW INDEX
 
-// Virtual for calculated ETA based on current location
+// Virtual for calculated ETA
 bookingSchema.virtual('currentETA').get(function() {
   if (!this.professional?.currentLocation || !this.location?.coordinates) return null;
   
@@ -178,12 +198,12 @@ bookingSchema.virtual('currentETA').get(function() {
     this.location.coordinates[0]
   );
   
-  return Math.round((distance / 30) * 60); // Assuming 30 km/h average speed
+  return Math.round((distance / 30) * 60);
 });
 
-// Instance method to calculate distance
+// Instance methods
 bookingSchema.methods.calculateDistance = function(lat1, lon1, lat2, lon2) {
-  const R = 6371; // Earth's radius in km
+  const R = 6371;
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
   const a = 
@@ -194,7 +214,6 @@ bookingSchema.methods.calculateDistance = function(lat1, lon1, lat2, lon2) {
   return R * c;
 };
 
-// Instance method to update tracking
 bookingSchema.methods.updateTracking = function(locationData) {
   if (!this.tracking) this.tracking = {};
   
@@ -207,7 +226,6 @@ bookingSchema.methods.updateTracking = function(locationData) {
     speed: locationData.speed || null
   };
   
-  // Calculate distance and ETA
   if (this.location?.coordinates) {
     const distance = this.calculateDistance(
       locationData.coordinates[1],
@@ -224,14 +242,12 @@ bookingSchema.methods.updateTracking = function(locationData) {
   return this;
 };
 
-// Pre-save middleware to ensure location data integrity
+// Pre-save middleware
 bookingSchema.pre('save', function(next) {
-  // Ensure location coordinates are numbers
   if (this.location?.coordinates) {
     this.location.coordinates = this.location.coordinates.map(coord => parseFloat(coord));
   }
   
-  // Ensure tracking location coordinates are numbers
   if (this.tracking?.lastLocation?.coordinates) {
     this.tracking.lastLocation.coordinates = this.tracking.lastLocation.coordinates.map(coord => parseFloat(coord));
   }
