@@ -177,94 +177,293 @@ async createBooking(req, res) {
   /**
    * Professional accepts booking
    */
-  async acceptBooking(req, res) {
-    console.log('👨‍🔧 [BOOKING-API] Professional accepting booking');
-    console.log('📋 [BOOKING-API] Booking ID:', req.params.bookingId);
-    console.log('👤 [BOOKING-API] Professional ID:', req.user._id);
+async acceptBooking(req, res) {
+  console.log('👨‍🔧 [BOOKING-API] Professional accepting booking');
+  console.log('📋 [BOOKING-API] Booking ID from params:', req.params.bookingId);
+  console.log('👤 [BOOKING-API] Professional ID from req.user:', req.user._id);
+  console.log('👤 [BOOKING-API] Full req.user:', JSON.stringify(req.user, null, 2));
+  
+  try {
+    const bookingId = req.params.bookingId;
+    const professionalId = req.user._id; // ✅ Extract from req.user, not parameters
     
+    console.log(`🎯 [BOOKING-API] Attempting to accept booking: ${bookingId}`);
+    console.log(`👤 [BOOKING-API] By professional: ${professionalId}`);
+    
+    // CRITICAL: Validate that professionalId exists
+    if (!professionalId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Professional ID not found in authentication token'
+      });
+    }
+    
+    // CRITICAL: Validate that bookingId exists
+    if (!bookingId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Booking ID is required'
+      });
+    }
+
+    // CRITICAL: Validate ObjectId formats
+    if (!mongoose.Types.ObjectId.isValid(bookingId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid booking ID format'
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(professionalId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid professional ID format'
+      });
+    }
+
+    // ✅ CALL THE SERVICE METHOD (which you need to create separately)
+    // Option 1: If you have a BookingService, call it
+    // const booking = await BookingService.acceptBooking(bookingId, professionalId);
+    
+    // Option 2: If you don't have a separate service, implement the logic here:
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
     try {
-    const { bookingId } = req.body;
-    const professionalId = req.user.professionalId || req.user._id;
+      // Convert to ObjectId explicitly
+      const bookingObjectId = new mongoose.Types.ObjectId(bookingId);
+      const professionalObjectId = new mongoose.Types.ObjectId(professionalId);
+      
+      console.log(`🔍 [BOOKING-API] Searching for booking with ObjectId: ${bookingObjectId}`);
+      
+      // Find booking
+      const booking = await Booking.findById(bookingObjectId)
+        .populate('user', 'name phone currentLocation')
+        .populate('service', 'name category pricing')
+        .session(session);
+      
+      console.log(`🔍 [BOOKING-API] Booking found: ${!!booking}`);
+      
+      if (!booking) {
+        await session.abortTransaction();
+        console.error(`❌ [BOOKING-API] No booking found with ID: ${bookingObjectId}`);
+        return res.status(404).json({
+          success: false,
+          message: 'Booking not found or already accepted'
+        });
+      }
+      
+      console.log(`📋 [BOOKING-API] Current booking status: ${booking.status}`);
+      console.log(`📋 [BOOKING-API] Current booking professional: ${booking.professional}`);
+      
+      // Check if booking is still pending
+      if (booking.status !== 'pending') {
+        await session.abortTransaction();
+        return res.status(400).json({
+          success: false,
+          message: `Cannot accept booking: booking is already ${booking.status}`
+        });
+      }
+      
+      // Check if booking already has a professional assigned
+      if (booking.professional) {
+        await session.abortTransaction();
+        return res.status(400).json({
+          success: false,
+          message: 'Booking already accepted by another professional'
+        });
+      }
+      
+      // Find professional
+      const professional = await Professional.findById(professionalObjectId).session(session);
+      
+      if (!professional) {
+        await session.abortTransaction();
+        console.error(`❌ [BOOKING-API] No professional found with ID: ${professionalObjectId}`);
+        return res.status(404).json({
+          success: false,
+          message: 'Professional not found'
+        });
+      }
+      
+      console.log(`👨‍🔧 [BOOKING-API] Professional found: ${professional.name}`);
+      console.log(`🔧 [BOOKING-API] Professional specializations: ${professional.specializations}`);
+      console.log(`📦 [BOOKING-API] Service category: ${booking.service.category}`);
+      
+      // Verify professional specialization
+      if (!professional.specializations.includes(booking.service.category)) {
+        await session.abortTransaction();
+        return res.status(400).json({
+          success: false,
+          message: `Service category '${booking.service.category}' does not match professional specializations: ${professional.specializations.join(', ')}`
+        });
+      }
+      
+      // Check professional availability
+      if (!professional.isAvailable) {
+        await session.abortTransaction();
+        return res.status(400).json({
+          success: false,
+          message: 'Professional is not currently available'
+        });
+      }
+      
+      console.log('📍 [BOOKING-API] Calculating initial ETA...');
+      
+      // Calculate initial ETA and distance
+      let initialETA = null;
+      let initialDistance = null;
+      
+      if (professional.currentLocation && professional.currentLocation.coordinates && 
+          booking.location && booking.location.coordinates) {
+        
+        // Calculate distance using Haversine formula
+        const calculateDistance = (lat1, lon1, lat2, lon2) => {
+          const R = 6371; // Radius of the Earth in km
+          const dLat = (lat2 - lat1) * Math.PI / 180;
+          const dLon = (lon2 - lon1) * Math.PI / 180;
+          const a = 
+            Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+            Math.sin(dLon/2) * Math.sin(dLon/2);
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+          return R * c;
+        };
+        
+        initialDistance = calculateDistance(
+          professional.currentLocation.coordinates[1], // Professional lat
+          professional.currentLocation.coordinates[0], // Professional lng
+          booking.location.coordinates[1], // Booking lat
+          booking.location.coordinates[0]  // Booking lng
+        );
+        
+        // Calculate ETA (assuming average speed of 30 km/h)
+        initialETA = Math.round((initialDistance / 30) * 60);
+        
+        console.log('📏 [BOOKING-API] Initial distance:', initialDistance.toFixed(2), 'km');
+        console.log('⏱️ [BOOKING-API] Initial ETA:', initialETA, 'minutes');
+      } else {
+        console.log('⚠️ [BOOKING-API] Professional or booking location not available for ETA calculation');
+      }
+      
+      // Update booking
+      booking.professional = professionalObjectId;
+      booking.status = 'accepted';
+      booking.acceptedAt = new Date();
+      
+      // Initialize tracking data
+      if (!booking.tracking) booking.tracking = {};
+      booking.tracking.trackingInitialized = new Date();
+      booking.tracking.initialETA = initialETA;
+      booking.tracking.initialDistance = initialDistance;
+      booking.tracking.isActive = true;
+      
+      // Set professional's initial location in tracking
+      if (professional.currentLocation) {
+        booking.tracking.lastLocation = {
+          type: 'Point',
+          coordinates: professional.currentLocation.coordinates,
+          timestamp: new Date()
+        };
+        booking.tracking.eta = initialETA;
+        booking.tracking.distance = initialDistance;
+      }
+      
+      console.log('💾 [BOOKING-API] Saving booking...');
+      await booking.save({ session });
+      console.log('✅ [BOOKING-API] Booking saved');
+      
+      // Update professional availability
+      professional.isAvailable = false;
+      professional.currentBooking = {
+        bookingId: bookingObjectId,
+        acceptedAt: new Date()
+      };
+      
+      console.log('💾 [BOOKING-API] Saving professional...');
+      await professional.save({ session });
+      console.log('✅ [BOOKING-API] Professional saved');
+      
+      await session.commitTransaction();
+      console.log('✅ [BOOKING-API] Transaction committed');
+      
+      // Populate professional details for response
+      await booking.populate('professional', 'name phone rating currentLocation');
+      
+      console.log('✅ [BOOKING-API] Booking accepted successfully:', booking._id);
+      
+      // Send success response
+      res.status(200).json({
+        success: true,
+        message: 'Booking accepted successfully',
+        data: {
+          booking: {
+            _id: booking._id,
+            status: booking.status,
+            scheduledDate: booking.scheduledDate,
+            location: booking.location,
+            totalAmount: booking.totalAmount,
+            professional: booking.professional,
+            acceptedAt: booking.acceptedAt,
+            tracking: {
+              initialized: true,
+              eta: booking.tracking?.eta,
+              distance: booking.tracking?.distance,
+              initialETA: booking.tracking?.initialETA,
+              initialDistance: booking.tracking?.initialDistance
+            }
+          }
+        }
+      });
 
-    console.log('🎯 Accepting booking:', bookingId);
-
-    const booking = await Booking.findOne({
-      _id: bookingId,
-      professional: professionalId,
-      status: 'pending'
-    }).populate('user').populate('service');
-
-    if (!booking) {
+      // TODO: Send socket notifications (if you have socket.io set up)
+      // this.notifyBookingAccepted(booking, professional, initialETA, initialDistance);
+      
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
+    
+  } catch (error) {
+    console.error('❌ [BOOKING-API] Error accepting booking:', error.message);
+    console.error('❌ [BOOKING-API] Error stack:', error.stack);
+    
+    // Handle specific error cases
+    if (error.message === 'Booking not found') {
       return res.status(404).json({
         success: false,
         message: 'Booking not found or already accepted'
       });
     }
-
-    // Get professional's current location
-    const professional = await Professional.findById(professionalId);
     
-    if (!professional.currentLocation || !professional.currentLocation.coordinates) {
+    if (error.message.includes('already accepted') || error.message.includes('already')) {
       return res.status(400).json({
         success: false,
-        message: 'Please enable location services to accept booking'
+        message: error.message
       });
     }
-
-    // Calculate initial distance and ETA
-    const distance = booking.calculateDistance(
-      professional.currentLocation.coordinates[1],
-      professional.currentLocation.coordinates[0],
-      booking.location.coordinates[1],
-      booking.location.coordinates[0]
-    );
     
-    const estimatedETA = Math.round((distance / 30) * 60); // 30 km/h average speed
-
-    // Update booking status and AUTOMATICALLY START TRACKING
-    booking.status = 'accepted';
-    booking.acceptedAt = new Date();
+    if (error.message.includes('not available')) {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
     
-    // Initialize tracking automatically
-    booking.tracking = {
-      isActive: true,
-      trackingInitialized: new Date(),
-      trackingStarted: new Date(),
-      liveTrackingEnabled: true,
-      initialDistance: distance,
-      distance: distance,
-      initialETA: estimatedETA,
-      eta: estimatedETA,
-      lastLocation: {
-        type: 'Point',
-        coordinates: professional.currentLocation.coordinates,
-        timestamp: new Date(),
-        accuracy: professional.currentLocation.accuracy || null
-      },
-      lastUpdate: new Date()
-    };
-
-    await booking.save();
-
-    console.log('✅ Booking accepted and tracking started automatically');
-
-    res.status(200).json({
-      success: true,
-      message: 'Booking accepted and tracking started automatically',
-      booking,
-      tracking: {
-        isActive: true,
-        distance,
-        eta: estimatedETA
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ Error accepting booking:', error);
+    if (error.message.includes('does not match')) {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+    
+    // Generic error response
     res.status(500).json({
       success: false,
-      message: 'Failed to accept booking',
-      error: error.message
+      message: error.message || 'Failed to accept booking',
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 };
