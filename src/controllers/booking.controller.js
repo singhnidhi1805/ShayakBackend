@@ -1145,66 +1145,83 @@ async getBookingById(req, res) {
   /**
    * Start a service
    */
-  async startService(req, res) {
-    console.log('🚀 [BOOKING-API] Starting service for booking:', req.params.bookingId);
+async startService(req, res) {
+  console.log('🚀 [BOOKING-CONTROLLER] Starting service for booking');
+  console.log('📋 [BOOKING-CONTROLLER] Booking ID:', req.params.bookingId);
+  console.log('👤 [BOOKING-CONTROLLER] Professional ID:', req.user._id);
+  
+  try {
+    // ✅ CORRECT: Extract from req.params (not req.body!)
+    const bookingId = req.params.bookingId;  // ← From URL parameter
+    const professionalId = req.user._id;      // ← From auth middleware
     
-   try {
-    const { bookingId } = req.body;
-    const professionalId = req.user.professionalId || req.user._id;
+    // Validate inputs
+    if (!bookingId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Booking ID is required'
+      });
+    }
 
-    console.log('🚀 Starting service:', bookingId);
+    if (!mongoose.Types.ObjectId.isValid(bookingId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid booking ID format'
+      });
+    }
 
-    const booking = await Booking.findOne({
-      _id: bookingId,
-      professional: professionalId,
-      status: 'accepted'
+    console.log('✅ [BOOKING-CONTROLLER] Validation passed, calling service...');
+    
+    // ✅ CORRECT: Call SERVICE method with direct parameters
+    const booking = await EnhancedBookingService.startService(
+      bookingId,        // ← Direct parameter
+      professionalId    // ← Direct parameter
+    );
+    
+    console.log('✅ [BOOKING-CONTROLLER] Service started successfully');
+
+    // Send response
+    res.status(200).json({
+      success: true,
+      message: 'Service started successfully',
+      data: {
+        booking: {
+          _id: booking._id,
+          status: booking.status,
+          tracking: {
+            startedAt: booking.tracking?.startedAt,
+            liveTrackingEnabled: booking.tracking?.liveTrackingEnabled,
+            eta: booking.tracking?.eta,
+            distance: booking.tracking?.distance
+          }
+        }
+      }
     });
 
-    if (!booking) {
+  } catch (error) {
+    console.error('❌ [BOOKING-CONTROLLER] Error starting service:', error.message);
+    
+    // Handle specific errors
+    if (error.message === 'Booking not found') {
       return res.status(404).json({
         success: false,
         message: 'Booking not found or not in accepted status'
       });
     }
-
-    // Get professional's current location (arrival location)
-    const professional = await Professional.findById(professionalId);
     
-    // Mark service as started
-    booking.status = 'in_progress';
-    booking.tracking.startedAt = new Date();
-    booking.tracking.arrivedAt = new Date();
+    if (error.message.includes('cannot start') || 
+        error.message.includes('not assigned')) {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
     
-    if (professional.currentLocation?.coordinates) {
-      booking.tracking.arrivalLocation = {
-        type: 'Point',
-        coordinates: professional.currentLocation.coordinates,
-        timestamp: new Date()
-      };
-    }
-
-    // Calculate total travel time
-    if (booking.tracking.trackingStarted) {
-      const travelTime = (new Date() - booking.tracking.trackingStarted) / 1000 / 60;
-      booking.tracking.totalTravelTime = Math.round(travelTime);
-    }
-
-    await booking.save();
-
-    console.log('✅ Service started');
-
-    res.status(200).json({
-      success: true,
-      message: 'Service started successfully',
-      booking
-    });
-
-  } catch (error) {
-    console.error('❌ Error starting service:', error);
+    // Generic error
     res.status(500).json({
       success: false,
       message: 'Failed to start service',
-      error: error.message
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
