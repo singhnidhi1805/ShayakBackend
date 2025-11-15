@@ -949,48 +949,72 @@ router.get('/:bookingId',
 
 /**
  * @swagger
- * /api/bookings/completion/send-otp:
+ * /api/bookings/{bookingId}/completion/send-otp:
  *   post:
  *     summary: Send OTP to customer for service completion verification
  *     tags:
  *       - Bookings
  *     security:
  *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - bookingId
- *             properties:
- *               bookingId:
- *                 type: string
- *                 description: ID of the booking to complete
+ *     parameters:
+ *       - in: path
+ *         name: bookingId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: ID of the booking to complete
+ *         example: "68f46c53ea7381076a706583"
  *     responses:
  *       200:
  *         description: OTP sent successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "OTP sent to customer successfully"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     sessionId:
+ *                       type: string
+ *                     customerPhone:
+ *                       type: string
+ *                     expiresIn:
+ *                       type: number
  *       404:
  *         description: Booking not found
  *       500:
  *         description: Server error
  */
 router.post(
-  '/completion/send-otp',
-   auth(['professional']), 
+  '/:bookingId/completion/send-otp',
+  auth(['professional']), 
   BookingController.sendServiceCompletionOTP
 );
 
 /**
  * @swagger
- * /api/bookings/completion/verify-otp:
+ * /api/bookings/{bookingId}/completion/verify-otp:
  *   post:
  *     summary: Verify OTP and mark service as completed
  *     tags:
  *       - Bookings
  *     security:
  *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: bookingId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: ID of the booking
+ *         example: "68f46c53ea7381076a706583"
  *     requestBody:
  *       required: true
  *       content:
@@ -998,15 +1022,12 @@ router.post(
  *           schema:
  *             type: object
  *             required:
- *               - bookingId
  *               - otp
  *             properties:
- *               bookingId:
- *                 type: string
- *                 description: ID of the booking
  *               otp:
  *                 type: string
  *                 description: OTP code received from customer
+ *                 example: "123456"
  *     responses:
  *       200:
  *         description: Service completed successfully
@@ -1018,45 +1039,43 @@ router.post(
  *         description: Server error
  */
 router.post(
-  '/completion/verify-otp',
-   auth(['professional']), 
+  '/:bookingId/completion/verify-otp',
+  auth(['professional']), 
   BookingController.verifyServiceCompletionOTP
 );
 
 /**
  * @swagger
- * /api/bookings/completion/resend-otp:
+ * /api/bookings/{bookingId}/completion/resend-otp:
  *   post:
  *     summary: Resend OTP for service completion
  *     tags:
  *       - Bookings
  *     security:
  *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - bookingId
- *             properties:
- *               bookingId:
- *                 type: string
+ *     parameters:
+ *       - in: path
+ *         name: bookingId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: ID of the booking
+ *         example: "68f46c53ea7381076a706583"
  *     responses:
  *       200:
  *         description: OTP resent successfully
  *       404:
  *         description: Booking not found
+ *       429:
+ *         description: Too many requests - please wait
  *       500:
  *         description: Server error
  */
 router.post(
-  '/completion/resend-otp',
+  '/:bookingId/completion/resend-otp',
   auth(['professional']), 
   BookingController.resendServiceCompletionOTP
 );
-
 
 
 module.exports = router;
