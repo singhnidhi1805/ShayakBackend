@@ -1406,166 +1406,180 @@ async startService(req, res) {
    * Verify OTP and mark service as completed
    * Professional enters the OTP received from customer
    */
-  async verifyServiceCompletionOTP(req, res) {
-    console.log('🔍 [BOOKING-API] Verifying service completion OTP');
-    
-    try {
-      const { bookingId } = req.params;
-      const { otp } = req.body;
-      const professionalId = req.user._id;
+async verifyServiceCompletionOTP(req, res) {
+  console.log('🔍 [BOOKING-API] Verifying service completion OTP');
+  
+  try {
+    const { bookingId } = req.params;
+    const { otp } = req.body;
+    const professionalId = req.user._id;
 
-      console.log('📋 [BOOKING-API] Booking ID:', bookingId);
-      console.log('🔢 [BOOKING-API] OTP length:', otp?.length);
+    console.log('📋 [BOOKING-API] Booking ID:', bookingId);
+    console.log('🔢 [BOOKING-API] OTP length:', otp?.length);
 
-      // Validate input
-      if (!bookingId || !otp) {
-        return res.status(400).json({
-          success: false,
-          message: 'Booking ID and OTP are required'
-        });
-      }
-
-      if (!mongoose.Types.ObjectId.isValid(bookingId)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid booking ID format'
-        });
-      }
-
-      // Validate OTP format
-      if (!/^\d{4,6}$/.test(otp)) {
-        return res.status(400).json({
-          success: false,
-          message: 'OTP must be 4-6 digits'
-        });
-      }
-
-      // Find booking
-      const booking = await Booking.findOne({
-        _id: bookingId,
-        professional: professionalId,
-        status: 'in_progress'
-      }).populate('user', 'name phone email').populate('service', 'name category pricing');
-
-      if (!booking) {
-        console.log('❌ [BOOKING-API] Booking not found or not in progress');
-        return res.status(404).json({
-          success: false,
-          message: 'Booking not found or not in progress'
-        });
-      }
-
-      // Check if OTP was sent
-      if (!booking.completionOTPSession) {
-        console.log('❌ [BOOKING-API] OTP not sent yet');
-        return res.status(400).json({
-          success: false,
-          message: 'OTP not sent yet. Please request OTP first.'
-        });
-      }
-
-      // Check OTP expiry (10 minutes)
-      const otpAge = (new Date() - new Date(booking.completionOTPSentAt)) / 1000 / 60;
-      if (otpAge > 10) {
-        console.log('❌ [BOOKING-API] OTP expired. Age:', otpAge.toFixed(2), 'minutes');
-        return res.status(400).json({
-          success: false,
-          message: 'OTP expired. Please request a new one.',
-          expired: true
-        });
-      }
-
-      // Check attempt limit (max 3 attempts)
-      if (booking.completionOTPAttempts >= 3) {
-        console.log('❌ [BOOKING-API] Max OTP attempts reached');
-        return res.status(400).json({
-          success: false,
-          message: 'Maximum OTP attempts reached. Please request a new OTP.',
-          maxAttemptsReached: true
-        });
-      }
-
-      // Verify OTP using Twilio Verify API
-      console.log('🔐 [BOOKING-API] Verifying OTP with Twilio...');
-      const isValid = await twilioService.verifyOtp(booking.user.phone, otp);
-
-      if (!isValid) {
-        // Increment attempt count
-        booking.completionOTPAttempts = (booking.completionOTPAttempts || 0) + 1;
-        await booking.save();
-
-        console.log('❌ [BOOKING-API] Invalid OTP. Attempts:', booking.completionOTPAttempts);
-        
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid OTP. Please try again.',
-          attemptsRemaining: 3 - booking.completionOTPAttempts
-        });
-      }
-
-      console.log('✅ [BOOKING-API] OTP verified successfully');
-
-      // AUTOMATICALLY STOP TRACKING
-      if (booking.tracking) {
-        booking.tracking.isActive = false;
-        booking.tracking.liveTrackingEnabled = false;
-        booking.tracking.trackingEnded = new Date();
-        
-        // Calculate total service time
-        if (booking.tracking.startedAt) {
-          const serviceTime = (new Date() - new Date(booking.tracking.startedAt)) / 1000 / 60;
-          booking.tracking.totalServiceTime = Math.round(serviceTime);
-        }
-        
-        console.log('🛑 [BOOKING-API] Tracking stopped automatically');
-      }
-
-      // Mark service as completed
-      booking.status = 'completed';
-      booking.completedAt = new Date();
-      booking.completionOTPVerifiedAt = new Date();
-      await booking.save();
-
-      // Calculate payment breakdown
-      const serviceAmount = booking.totalAmount || booking.service?.pricing?.basePrice || 0;
-      const additionalCharges = booking.additionalCharges || [];
-      
-      const paymentBreakdown = this.calculatePaymentBreakdown(
-        serviceAmount,
-        additionalCharges
-      );
-
-      console.log('✅ [BOOKING-API] Service completed successfully');
-      console.log('💰 [BOOKING-API] Payment breakdown:', paymentBreakdown);
-
-      res.status(200).json({
-        success: true,
-        message: 'Service completed successfully and tracking stopped',
-        data: {
-          booking: {
-            _id: booking._id,
-            status: booking.status,
-            completedAt: booking.completedAt,
-            tracking: {
-              isActive: false,
-              trackingEnded: booking.tracking?.trackingEnded,
-              totalTravelTime: booking.tracking?.totalTravelTime,
-              totalServiceTime: booking.tracking?.totalServiceTime
-            }
-          },
-          paymentBreakdown
-        }
-      });
-
-    } catch (error) {
-      console.error('❌ [BOOKING-API] Error verifying service completion OTP:', error);
-      res.status(500).json({
+    // Validate input
+    if (!bookingId || !otp) {
+      return res.status(400).json({
         success: false,
-        message: 'Failed to verify OTP',
-        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        message: 'Booking ID and OTP are required'
       });
     }
+
+    if (!mongoose.Types.ObjectId.isValid(bookingId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid booking ID format'
+      });
+    }
+
+    // Validate OTP format
+    if (!/^\d{4,6}$/.test(otp)) {
+      return res.status(400).json({
+        success: false,
+        message: 'OTP must be 4-6 digits'
+      });
+    }
+
+    // Find booking
+    const booking = await Booking.findOne({
+      _id: bookingId,
+      professional: professionalId,
+      status: 'in_progress'
+    }).populate('user', 'name phone email').populate('service', 'name category pricing');
+
+    if (!booking) {
+      console.log('❌ [BOOKING-API] Booking not found or not in progress');
+      return res.status(404).json({
+        success: false,
+        message: 'Booking not found or not in progress'
+      });
+    }
+
+    // Check if OTP was sent
+    if (!booking.completionOTPSession) {
+      console.log('❌ [BOOKING-API] OTP not sent yet');
+      return res.status(400).json({
+        success: false,
+        message: 'OTP not sent yet. Please request OTP first.'
+      });
+    }
+
+    // Check OTP expiry (10 minutes)
+    const otpAge = (new Date() - new Date(booking.completionOTPSentAt)) / 1000 / 60;
+    if (otpAge > 10) {
+      console.log('❌ [BOOKING-API] OTP expired. Age:', otpAge.toFixed(2), 'minutes');
+      return res.status(400).json({
+        success: false,
+        message: 'OTP expired. Please request a new one.',
+        expired: true
+      });
+    }
+
+    // Check attempt limit (max 3 attempts)
+    if (booking.completionOTPAttempts >= 3) {
+      console.log('❌ [BOOKING-API] Max OTP attempts reached');
+      return res.status(400).json({
+        success: false,
+        message: 'Maximum OTP attempts reached. Please request a new OTP.',
+        maxAttemptsReached: true
+      });
+    }
+
+    // Verify OTP using Twilio Verify API
+    console.log('🔐 [BOOKING-API] Verifying OTP with Twilio...');
+    const isValid = await twilioService.verifyOtp(booking.user.phone, otp);
+
+    if (!isValid) {
+      // Increment attempt count
+      booking.completionOTPAttempts = (booking.completionOTPAttempts || 0) + 1;
+      await booking.save();
+
+      console.log('❌ [BOOKING-API] Invalid OTP. Attempts:', booking.completionOTPAttempts);
+      
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid OTP. Please try again.',
+        attemptsRemaining: 3 - booking.completionOTPAttempts
+      });
+    }
+
+    console.log('✅ [BOOKING-API] OTP verified successfully');
+
+    // AUTOMATICALLY STOP TRACKING
+    if (booking.tracking) {
+      booking.tracking.isActive = false;
+      booking.tracking.liveTrackingEnabled = false;
+      booking.tracking.trackingEnded = new Date();
+      
+      // Calculate total service time
+      if (booking.tracking.startedAt) {
+        const serviceTime = (new Date() - new Date(booking.tracking.startedAt)) / 1000 / 60;
+        booking.tracking.totalServiceTime = Math.round(serviceTime);
+      }
+      
+      console.log('🛑 [BOOKING-API] Tracking stopped automatically');
+    }
+
+    // Mark service as completed
+    booking.status = 'completed';
+    booking.completedAt = new Date();
+    booking.completionOTPVerifiedAt = new Date();
+    await booking.save();
+
+    // ✅ FIXED: Calculate payment breakdown inline
+    const serviceAmount = booking.totalAmount || booking.service?.pricing?.basePrice || 0;
+    const additionalCharges = booking.additionalCharges || [];
+    
+    const additionalAmount = additionalCharges.reduce(
+      (sum, charge) => sum + (charge.amount || 0),
+      0
+    );
+    const totalAmount = serviceAmount + additionalAmount;
+    const commissionRate = 0.15;
+    const platformCommission = Math.round(totalAmount * commissionRate * 100) / 100;
+    const professionalPayout = Math.round((totalAmount - platformCommission) * 100) / 100;
+
+    const paymentBreakdown = {
+      serviceAmount: parseFloat(serviceAmount.toFixed(2)),
+      additionalAmount: parseFloat(additionalAmount.toFixed(2)),
+      totalAmount: parseFloat(totalAmount.toFixed(2)),
+      platformCommission: parseFloat(platformCommission.toFixed(2)),
+      professionalPayout: parseFloat(professionalPayout.toFixed(2)),
+      commissionRate,
+      additionalCharges
+    };
+
+    console.log('✅ [BOOKING-API] Service completed successfully');
+    console.log('💰 [BOOKING-API] Payment breakdown:', paymentBreakdown);
+
+    res.status(200).json({
+      success: true,
+      message: 'Service completed successfully and tracking stopped',
+      data: {
+        booking: {
+          _id: booking._id,
+          status: booking.status,
+          completedAt: booking.completedAt,
+          tracking: {
+            isActive: false,
+            trackingEnded: booking.tracking?.trackingEnded,
+            totalTravelTime: booking.tracking?.totalTravelTime,
+            totalServiceTime: booking.tracking?.totalServiceTime
+          }
+        },
+        paymentBreakdown
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ [BOOKING-API] Error verifying service completion OTP:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to verify OTP',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
+}
 
   async updateTrackingLocation (req, res) {
      try {
