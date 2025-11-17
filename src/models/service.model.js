@@ -52,6 +52,11 @@ const serviceSchema = new mongoose.Schema({
     ],
     index: true
   },
+
+  image: {
+    type: String,
+    trim: true
+  },
   description: {
     type: String,
     trim: true

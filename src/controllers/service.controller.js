@@ -1,6 +1,39 @@
 const Service = require('../models/service.model');
 const Joi = require('joi');
 
+// ✅ Helper function to get full image URL
+const getFullImageUrl = (imagePath, req) => {
+  if (!imagePath) return null;
+  
+  // If already a full URL, return as is
+  if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
+    return imagePath;
+  }
+  
+  // Remove leading slash if present
+  const cleanPath = imagePath.startsWith('/') ? imagePath.substring(1) : imagePath;
+  
+  // Get base URL from environment or request
+  const baseUrl = process.env.BASE_URL || 
+                  process.env.API_URL || 
+                  `${req.protocol}://${req.get('host')}`;
+  
+  return `${baseUrl}/${cleanPath}`;
+};
+
+// ✅ Transform service to include full image URL
+const transformServiceResponse = (service, req) => {
+  if (!service) return null;
+  
+  const serviceObj = service.toObject ? service.toObject() : service;
+  
+  if (serviceObj.image) {
+    serviceObj.imageUrl = getFullImageUrl(serviceObj.image, req);
+  }
+  
+  return serviceObj;
+};
+
 // Validation schema
 const serviceValidation = Joi.object({
   name: Joi.string().required(),
@@ -26,7 +59,10 @@ const createService = async (req, res) => {
 
     const service = new Service(req.body);
     await service.save();
-    res.status(201).json(service);
+    
+    // ✅ Transform response with full image URL
+    const transformedService = transformServiceResponse(service, req);
+    res.status(201).json(transformedService);
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -54,7 +90,13 @@ const getServices = async (req, res) => {
     if (sort === 'rating') sortOption.rating = -1;
 
     const services = await Service.find(query).sort(sortOption);
-    res.json(services);
+    
+    // ✅ Transform all services with full image URLs
+    const transformedServices = services.map(service => 
+      transformServiceResponse(service, req)
+    );
+    
+    res.json(transformedServices);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -64,7 +106,13 @@ const getServices = async (req, res) => {
 const getServicesByCategory = async (req, res) => {
   try {
     const services = await Service.find({ category: req.params.category });
-    res.json(services);
+    
+    // ✅ Transform all services with full image URLs
+    const transformedServices = services.map(service => 
+      transformServiceResponse(service, req)
+    );
+    
+    res.json(transformedServices);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -77,7 +125,10 @@ const getServiceDetails = async (req, res) => {
     if (!service) {
       return res.status(404).json({ error: 'Service not found' });
     }
-    res.json(service);
+    
+    // ✅ Transform response with full image URL
+    const transformedService = transformServiceResponse(service, req);
+    res.json(transformedService);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -89,7 +140,13 @@ const getTopRatedServices = async (req, res) => {
     const services = await Service.find()
       .sort({ rating: -1, numberOfRatings: -1 })
       .limit(10);
-    res.json(services);
+    
+    // ✅ Transform all services with full image URLs
+    const transformedServices = services.map(service => 
+      transformServiceResponse(service, req)
+    );
+    
+    res.json(transformedServices);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -106,7 +163,13 @@ const searchServices = async (req, res) => {
         { category: { $regex: query, $options: 'i' } }
       ]
     });
-    res.json(services);
+    
+    // ✅ Transform all services with full image URLs
+    const transformedServices = services.map(service => 
+      transformServiceResponse(service, req)
+    );
+    
+    res.json(transformedServices);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -135,7 +198,9 @@ const updateService = async (req, res) => {
       return res.status(404).json({ error: 'Service not found' });
     }
 
-    res.json(service);
+    // ✅ Transform response with full image URL
+    const transformedService = transformServiceResponse(service, req);
+    res.json(transformedService);
   } catch (error) {
     res.status(400).json({ error: error.message });
   }

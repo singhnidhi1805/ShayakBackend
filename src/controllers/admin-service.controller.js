@@ -2,6 +2,41 @@ const Service = require('../models/service.model');
 const logger = require('../config/logger');
 const mongoose = require('mongoose');
 const Joi = require('joi');
+const fs = require('fs');
+const path = require('path');
+
+// ✅ Helper function to get full image URL
+const getFullImageUrl = (imagePath, req) => {
+  if (!imagePath) return null;
+  
+  // If already a full URL, return as is
+  if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
+    return imagePath;
+  }
+  
+  // Remove leading slash if present
+  const cleanPath = imagePath.startsWith('/') ? imagePath.substring(1) : imagePath;
+  
+  // Get base URL from environment or request
+  const baseUrl = process.env.BASE_URL || 
+                  process.env.API_URL || 
+                  `${req.protocol}://${req.get('host')}`;
+  
+  return `${baseUrl}/${cleanPath}`;
+};
+
+// ✅ Transform service to include full image URL
+const transformServiceResponse = (service, req) => {
+  if (!service) return null;
+  
+  const serviceObj = service.toObject ? service.toObject() : service;
+  
+  if (serviceObj.image) {
+    serviceObj.imageUrl = getFullImageUrl(serviceObj.image, req);
+  }
+  
+  return serviceObj;
+};
 
 // Validation schema for service creation/updating
 const serviceSchema = Joi.object({
@@ -20,6 +55,7 @@ const serviceSchema = Joi.object({
     'tiling'
   ),
   description: Joi.string().allow('').trim().max(1000),
+  image: Joi.string().allow(''),
   pricing: Joi.object({
     type: Joi.string().valid('fixed', 'range', 'hourly').required(),
     amount: Joi.when('type', {
@@ -57,43 +93,57 @@ const serviceSchema = Joi.object({
 class AdminServiceController {
   /**
    * Create a new service template
-   * @param {Object} req - Express request object
-   * @param {Object} res - Express response object
    */
   async createServiceTemplate(req, res) {
     try {
       console.log('🔧 [ADMIN-SERVICE] Creating service template');
-      console.log('📊 Request body:', JSON.stringify(req.body, null, 2));
       
-      // Ensure category field is present and in the correct format
-      if (!req.body.category) {
+      const parsedBody = { ...req.body };
+      
+      if (typeof parsedBody.pricing === 'string') {
+        parsedBody.pricing = JSON.parse(parsedBody.pricing);
+      }
+      
+      if (typeof parsedBody.serviceDetails === 'string') {
+        parsedBody.serviceDetails = JSON.parse(parsedBody.serviceDetails);
+      }
+      
+      if (typeof parsedBody.customizationOptions === 'string') {
+        parsedBody.customizationOptions = JSON.parse(parsedBody.customizationOptions);
+      }
+      
+      if (req.file) {
+        parsedBody.image = `/uploads/services/${req.file.filename}`;
+      }
+      
+      if (!parsedBody.category) {
         return res.status(400).json({ 
           error: 'Missing required field', 
           details: 'Category is required' 
         });
       }
       
-      // Validate request body
-      const { error, value } = serviceSchema.validate(req.body);
+      const { error, value } = serviceSchema.validate(parsedBody);
       
       if (error) {
         console.log('❌ Validation error details:', error.details);
-        logger.warn('Service template validation failed', { error: error.details });
+        
+        if (req.file) {
+          fs.unlinkSync(req.file.path);
+        }
+        
         return res.status(400).json({ 
           error: 'Invalid service data', 
           details: error.details[0].message 
         });
       }
       
-      // Create service with validated data
       const newTemplate = new Service({
         ...value,
         createdBy: req.user._id,
         createdAt: new Date(),
         updatedAt: new Date()
       });
-      
-      console.log('💾 Service to be saved:', JSON.stringify(newTemplate, null, 2));
       
       await newTemplate.save();
       
@@ -102,16 +152,24 @@ class AdminServiceController {
         adminId: req.user._id 
       });
       
-      console.log('✅ Service template created:', newTemplate._id);
+      // ✅ Transform response with full image URL
+      const transformedService = transformServiceResponse(newTemplate, req);
       
       res.status(201).json({
         success: true,
         message: 'Service template created successfully',
-        service: newTemplate
+        service: transformedService
       });
     } catch (error) {
       console.error('❌ Error creating service template:', error);
-      logger.error('Error creating service template', { error });
+      
+      if (req.file) {
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch (unlinkError) {
+          console.error('Error deleting file:', unlinkError);
+        }
+      }
       
       if (error.name === 'ValidationError') {
         return res.status(400).json({ 
@@ -135,8 +193,6 @@ class AdminServiceController {
 
   /**
    * Update an existing service template
-   * @param {Object} req - Express request object
-   * @param {Object} res - Express response object
    */
   async updateServiceTemplate(req, res) {
     try {
@@ -144,16 +200,46 @@ class AdminServiceController {
       
       const { id } = req.params;
       
-      // Validate MongoDB ObjectID
       if (!mongoose.Types.ObjectId.isValid(id)) {
+        if (req.file) {
+          fs.unlinkSync(req.file.path);
+        }
         return res.status(400).json({ error: 'Invalid service ID format' });
       }
       
-      // Validate request body
-      const { error, value } = serviceSchema.validate(req.body);
+      const parsedBody = { ...req.body };
+      
+      if (typeof parsedBody.pricing === 'string') {
+        parsedBody.pricing = JSON.parse(parsedBody.pricing);
+      }
+      
+      if (typeof parsedBody.serviceDetails === 'string') {
+        parsedBody.serviceDetails = JSON.parse(parsedBody.serviceDetails);
+      }
+      
+      if (typeof parsedBody.customizationOptions === 'string') {
+        parsedBody.customizationOptions = JSON.parse(parsedBody.customizationOptions);
+      }
+      
+      if (req.file) {
+        const oldService = await Service.findById(id);
+        if (oldService && oldService.image) {
+          const oldImagePath = path.join(__dirname, '..', oldService.image);
+          if (fs.existsSync(oldImagePath)) {
+            fs.unlinkSync(oldImagePath);
+          }
+        }
+        
+        parsedBody.image = `/uploads/services/${req.file.filename}`;
+      }
+      
+      const { error, value } = serviceSchema.validate(parsedBody);
       
       if (error) {
-        logger.warn('Service template validation failed', { error: error.details });
+        if (req.file) {
+          fs.unlinkSync(req.file.path);
+        }
+        
         return res.status(400).json({ 
           error: 'Invalid service data', 
           details: error.details[0].message 
@@ -171,6 +257,9 @@ class AdminServiceController {
       );
       
       if (!updatedTemplate) {
+        if (req.file) {
+          fs.unlinkSync(req.file.path);
+        }
         return res.status(404).json({ error: 'Service template not found' });
       }
       
@@ -179,15 +268,25 @@ class AdminServiceController {
         adminId: req.user._id 
       });
       
-      console.log('✅ Service template updated:', updatedTemplate._id);
+      // ✅ Transform response with full image URL
+      const transformedService = transformServiceResponse(updatedTemplate, req);
       
       res.json({
         success: true,
         message: 'Service template updated successfully',
-        service: updatedTemplate
+        service: transformedService
       });
     } catch (error) {
       logger.error('Error updating service template', { error, serviceId: req.params.id });
+      
+      if (req.file) {
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch (unlinkError) {
+          console.error('Error deleting file:', unlinkError);
+        }
+      }
+      
       res.status(500).json({ 
         error: 'Failed to update service template',
         message: process.env.NODE_ENV === 'development' ? error.message : undefined
@@ -197,8 +296,6 @@ class AdminServiceController {
 
   /**
    * Get a single service template by ID
-   * @param {Object} req - Express request object
-   * @param {Object} res - Express response object
    */
   async getServiceTemplate(req, res) {
     try {
@@ -206,7 +303,6 @@ class AdminServiceController {
       
       const { id } = req.params;
       
-      // Validate MongoDB ObjectID
       if (!mongoose.Types.ObjectId.isValid(id)) {
         return res.status(400).json({ error: 'Invalid service ID format' });
       }
@@ -217,11 +313,12 @@ class AdminServiceController {
         return res.status(404).json({ error: 'Service template not found' });
       }
       
-      console.log('✅ Service template found:', service._id);
+      // ✅ Transform response with full image URL
+      const transformedService = transformServiceResponse(service, req);
       
       res.json({
         success: true,
-        service
+        service: transformedService
       });
     } catch (error) {
       logger.error('Error fetching service template', { error, serviceId: req.params.id });
@@ -231,8 +328,6 @@ class AdminServiceController {
 
   /**
    * List all service templates with filtering options
-   * @param {Object} req - Express request object
-   * @param {Object} res - Express response object
    */
   async listServiceTemplates(req, res) {
     try {
@@ -240,7 +335,6 @@ class AdminServiceController {
       
       const { category, status, search, page = 1, limit = 10 } = req.query;
       
-      // Build query filters
       const filter = {};
       
       if (category && category !== 'all') {
@@ -258,26 +352,23 @@ class AdminServiceController {
         ];
       }
       
-      console.log('🔍 Filter applied:', JSON.stringify(filter));
-      
-      // Calculate pagination
       const skip = (parseInt(page) - 1) * parseInt(limit);
-      
-      // Count total templates matching the filter
       const total = await Service.countDocuments(filter);
       
-      // Get templates with pagination
       const templates = await Service.find(filter)
         .sort({ updatedAt: -1 })
         .skip(skip)
         .limit(parseInt(limit));
       
-      console.log('✅ Found', templates.length, 'service templates');
+      // ✅ Transform all services with full image URLs
+      const transformedTemplates = templates.map(template => 
+        transformServiceResponse(template, req)
+      );
       
       res.json({
         success: true,
         message: 'Service templates retrieved successfully',
-        templates,
+        templates: transformedTemplates,
         pagination: {
           total,
           page: parseInt(page),
@@ -291,9 +382,7 @@ class AdminServiceController {
   }
 
   /**
-   * Delete a service template - MISSING METHOD ADDED
-   * @param {Object} req - Express request object
-   * @param {Object} res - Express response object
+   * Delete a service template
    */
   async deleteServiceTemplate(req, res) {
     try {
@@ -301,7 +390,6 @@ class AdminServiceController {
       
       const { id } = req.params;
       
-      // Validate MongoDB ObjectID
       if (!mongoose.Types.ObjectId.isValid(id)) {
         return res.status(400).json({ error: 'Invalid service ID format' });
       }
@@ -312,12 +400,17 @@ class AdminServiceController {
         return res.status(404).json({ error: 'Service template not found' });
       }
       
+      if (deletedTemplate.image) {
+        const imagePath = path.join(__dirname, '..', deletedTemplate.image);
+        if (fs.existsSync(imagePath)) {
+          fs.unlinkSync(imagePath);
+        }
+      }
+      
       logger.info('Service template deleted successfully', { 
         serviceId: id,
         adminId: req.user._id 
       });
-      
-      console.log('✅ Service template deleted:', id);
       
       res.json({
         success: true,
@@ -339,8 +432,6 @@ class AdminServiceController {
 
   /**
    * Update the status of a service template (active/inactive)
-   * @param {Object} req - Express request object
-   * @param {Object} res - Express response object
    */
   async updateServiceStatus(req, res) {
     try {
@@ -349,12 +440,10 @@ class AdminServiceController {
       const { id } = req.params;
       const { isActive } = req.body;
       
-      // Validate MongoDB ObjectID
       if (!mongoose.Types.ObjectId.isValid(id)) {
         return res.status(400).json({ error: 'Invalid service ID format' });
       }
       
-      // Validate isActive parameter
       if (typeof isActive !== 'boolean') {
         return res.status(400).json({ error: 'isActive must be a boolean value' });
       }
@@ -379,12 +468,13 @@ class AdminServiceController {
         adminId: req.user._id 
       });
       
-      console.log('✅ Service status updated:', id, 'Active:', isActive);
+      // ✅ Transform response with full image URL
+      const transformedService = transformServiceResponse(updatedTemplate, req);
       
       res.json({
         success: true,
         message: `Service template ${isActive ? 'activated' : 'deactivated'} successfully`,
-        service: updatedTemplate
+        service: transformedService
       });
     } catch (error) {
       logger.error('Error updating service status', { error, serviceId: req.params.id });

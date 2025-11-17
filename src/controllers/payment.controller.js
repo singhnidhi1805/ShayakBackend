@@ -4,6 +4,15 @@ const Payment = require('../models/payment.model');
 const Booking = require('../models/booking.model');
 const mongoose = require('mongoose');
 
+
+const Razorpay = require('razorpay'); // ✅ ADD THIS
+const crypto = require('crypto'); // ✅ ADD THIS (for signature verification)
+
+// ✅ Initialize Razorpay instance
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
+});
 class PaymentController {
   
   /**
@@ -899,80 +908,93 @@ async deletePaymentMethod(req, res) {
     }
   }
 
-  async createRazorpayOrder(req, res) {
-    try {
-      const { bookingId, amount, serviceAmount, additionalCharges = [] } = req.body;
-      
-      // Find booking
-      const booking = await Booking.findById(bookingId)
-        .populate('user')
-        .populate('professional');
-      
-      if (!booking) {
-        return res.status(404).json({
-          success: false,
-          message: 'Booking not found',
-        });
-      }
-
-      // Calculate breakdown
-      const breakdown = this.calculatePaymentBreakdown(
-        serviceAmount,
-        additionalCharges
-      );
-
-      // Create payment record
-      const payment = await Payment.create({
-        booking: bookingId,
-        professional: booking.professional._id,
-        user: booking.user._id,
-        serviceAmount,
-        additionalAmount: breakdown.additionalAmount,
-        totalAmount: breakdown.totalAmount,
-        platformCommission: breakdown.platformCommission,
-        professionalPayout: breakdown.professionalPayout,
-        paymentMethod: 'online',
-        paymentType: 'razorpay',
-        additionalCharges,
-        status: 'pending',
-      });
-
-      // Create Razorpay order
-      const options = {
-        amount: Math.round(breakdown.totalAmount * 100), // Amount in paise
-        currency: 'INR',
-        receipt: `rcpt_${payment._id}`,
-        notes: {
-          bookingId: bookingId,
-          paymentId: payment._id.toString(),
-        },
-      };
-
-      const razorpayOrder = await razorpay.orders.create(options);
-
-      // Update payment with Razorpay order ID
-      payment.razorpayOrderId = razorpayOrder.id;
-      await payment.save();
-
-      res.status(200).json({
-        success: true,
-        orderId: razorpayOrder.id,
-        amount: breakdown.totalAmount,
-        razorpayKeyId: process.env.RAZORPAY_KEY_ID,
-        customerEmail: booking.user.email,
-        customerPhone: booking.user.phone,
-        customerName: booking.user.name,
-        paymentId: payment._id,
-      });
-    } catch (error) {
-      console.error('Create Razorpay order error:', error);
-      res.status(500).json({
+async createRazorpayOrder(req, res) {
+  try {
+    const { bookingId, amount, serviceAmount, additionalCharges = [] } = req.body;
+    
+    // Find booking
+    const booking = await Booking.findById(bookingId)
+      .populate('user')
+      .populate('professional');
+    
+    if (!booking) {
+      return res.status(404).json({
         success: false,
-        message: 'Failed to create payment order',
-        error: error.message,
+        message: 'Booking not found',
       });
     }
+
+    // ✅ FIXED: Calculate breakdown inline
+    const additionalAmount = additionalCharges.reduce(
+      (sum, charge) => sum + (charge.amount || 0),
+      0
+    );
+    const totalAmount = serviceAmount + additionalAmount;
+    const commissionRate = 0.15;
+    const platformCommission = Math.round(totalAmount * commissionRate * 100) / 100;
+    const professionalPayout = Math.round((totalAmount - platformCommission) * 100) / 100;
+
+    const breakdown = {
+      serviceAmount,
+      additionalAmount,
+      totalAmount,
+      platformCommission,
+      professionalPayout,
+      commissionRate,
+    };
+
+    // Create payment record
+    const payment = await Payment.create({
+      booking: bookingId,
+      professional: booking.professional._id,
+      user: booking.user._id,
+      serviceAmount,
+      additionalAmount: breakdown.additionalAmount,
+      totalAmount: breakdown.totalAmount,
+      platformCommission: breakdown.platformCommission,
+      professionalPayout: breakdown.professionalPayout,
+      paymentMethod: 'online',
+      paymentType: 'razorpay',
+      additionalCharges,
+      status: 'pending',
+    });
+
+    // Create Razorpay order
+    const options = {
+      amount: Math.round(breakdown.totalAmount * 100), // Amount in paise
+      currency: 'INR',
+      receipt: `rcpt_${payment._id}`,
+      notes: {
+        bookingId: bookingId,
+        paymentId: payment._id.toString(),
+      },
+    };
+
+    const razorpayOrder = await razorpay.orders.create(options);
+
+    // Update payment with Razorpay order ID
+    payment.razorpayOrderId = razorpayOrder.id;
+    await payment.save();
+
+    res.status(200).json({
+      success: true,
+      orderId: razorpayOrder.id,
+      amount: breakdown.totalAmount,
+      razorpayKeyId: process.env.RAZORPAY_KEY_ID,
+      customerEmail: booking.user.email,
+      customerPhone: booking.user.phone,
+      customerName: booking.user.name,
+      paymentId: payment._id,
+    });
+  } catch (error) {
+    console.error('Create Razorpay order error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create payment order',
+      error: error.message,
+    });
   }
+}
 
   // Verify Razorpay payment
   async verifyRazorpayPayment(req, res) {
@@ -1063,10 +1085,24 @@ async deletePaymentMethod(req, res) {
       }
 
       // Calculate breakdown
-      const breakdown = this.calculatePaymentBreakdown(
-        serviceAmount,
-        additionalCharges
-      );
+      // ✅ Use this everywhere instead of this.calculatePaymentBreakdown()
+const additionalAmount = additionalCharges.reduce(
+  (sum, charge) => sum + (charge.amount || 0),
+  0
+);
+const totalAmount = serviceAmount + additionalAmount;
+const commissionRate = 0.15;
+const platformCommission = Math.round(totalAmount * commissionRate * 100) / 100;
+const professionalPayout = Math.round((totalAmount - platformCommission) * 100) / 100;
+
+const breakdown = {
+  serviceAmount,
+  additionalAmount,
+  totalAmount,
+  platformCommission,
+  professionalPayout,
+  commissionRate,
+};
 
       // Create payment record
       const payment = await Payment.create({
@@ -1146,10 +1182,24 @@ async deletePaymentMethod(req, res) {
       }
 
       // Calculate breakdown
-      const breakdown = this.calculatePaymentBreakdown(
-        serviceAmount,
-        additionalCharges
-      );
+      // ✅ Use this everywhere instead of this.calculatePaymentBreakdown()
+const additionalAmount = additionalCharges.reduce(
+  (sum, charge) => sum + (charge.amount || 0),
+  0
+);
+const totalAmount = serviceAmount + additionalAmount;
+const commissionRate = 0.15;
+const platformCommission = Math.round(totalAmount * commissionRate * 100) / 100;
+const professionalPayout = Math.round((totalAmount - platformCommission) * 100) / 100;
+
+const breakdown = {
+  serviceAmount,
+  additionalAmount,
+  totalAmount,
+  platformCommission,
+  professionalPayout,
+  commissionRate,
+};
 
       // Calculate commission due date (7 days from now)
       const commissionDueDate = new Date();
@@ -1222,10 +1272,24 @@ async deletePaymentMethod(req, res) {
       }
 
       // Calculate breakdown
-      const breakdown = this.calculatePaymentBreakdown(
-        serviceAmount,
-        additionalCharges
-      );
+      // ✅ Use this everywhere instead of this.calculatePaymentBreakdown()
+const additionalAmount = additionalCharges.reduce(
+  (sum, charge) => sum + (charge.amount || 0),
+  0
+);
+const totalAmount = serviceAmount + additionalAmount;
+const commissionRate = 0.15;
+const platformCommission = Math.round(totalAmount * commissionRate * 100) / 100;
+const professionalPayout = Math.round((totalAmount - platformCommission) * 100) / 100;
+
+const breakdown = {
+  serviceAmount,
+  additionalAmount,
+  totalAmount,
+  platformCommission,
+  professionalPayout,
+  commissionRate,
+};
 
       // Calculate commission due date (7 days from now)
       const commissionDueDate = new Date();

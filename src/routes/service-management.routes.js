@@ -1,14 +1,54 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const auth = require('../middleware/auth.middleware');
-const AdminServiceController = require('../controllers/admin-service.controller');
-const ProfessionalServiceController = require('../controllers/professional-service.controller');
+const adminServiceController = require('../controllers/admin-service.controller');
+
+// ✅ Create uploads directory if it doesn't exist
+const uploadDir = 'uploads/services';
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+// ✅ Configure multer for image uploads
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, uploadDir);
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'service-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+// File filter to accept only images
+const fileFilter = (req, file, cb) => {
+  const allowedTypes = /jpeg|jpg|png|gif|webp/;
+  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+  const mimetype = allowedTypes.test(file.mimetype);
+  
+  if (mimetype && extname) {
+    return cb(null, true);
+  } else {
+    cb(new Error('Only image files are allowed (jpeg, jpg, png, gif, webp)'));
+  }
+};
+
+const upload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB max file size
+  },
+  fileFilter: fileFilter
+});
 
 /**
  * @swagger
  * tags:
- *   name: AdminServiceTemplates
- *   description: Routes for managing service templates by admins
+ *   name: Admin Service Templates
+ *   description: Admin endpoints for managing service templates
  */
 
 /**
@@ -16,85 +56,49 @@ const ProfessionalServiceController = require('../controllers/professional-servi
  * /api/admin/templates:
  *   post:
  *     summary: Create a new service template
- *     tags: [AdminServiceTemplates]
+ *     tags: [Admin Service Templates]
  *     security:
  *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
- *         application/json:
+ *         multipart/form-data:
  *           schema:
  *             type: object
+ *             required:
+ *               - name
+ *               - category
  *             properties:
  *               name:
  *                 type: string
- *                 description: The name of the service template
+ *               category:
+ *                 type: string
  *               description:
  *                 type: string
- *                 description: Detailed description of the service template
- *               price:
- *                 type: number
- *                 description: Default price of the service template
+ *               image:
+ *                 type: string
+ *                 format: binary
+ *               pricing:
+ *                 type: object
+ *               serviceDetails:
+ *                 type: array
+ *               customizationOptions:
+ *                 type: array
+ *               isActive:
+ *                 type: boolean
  *     responses:
  *       201:
  *         description: Service template created successfully
  *       400:
- *         description: Invalid input data
+ *         description: Invalid request data
  *       401:
  *         description: Unauthorized
- *       403:
- *         description: Access denied - Admin role required
  */
-// FIXED: Using auth(['admin']) instead of auth.admin
-router.post('/admin/templates', 
-  auth(['admin']), 
-  AdminServiceController.createServiceTemplate
-);
-
-/**
- * @swagger
- * /api/admin/templates/{id}:
- *   put:
- *     summary: Update an existing service template
- *     tags: [AdminServiceTemplates]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - name: id
- *         in: path
- *         required: true
- *         schema:
- *           type: string
- *         description: The ID of the service template to update
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               name:
- *                 type: string
- *               description:
- *                 type: string
- *               price:
- *                 type: number
- *     responses:
- *       200:
- *         description: Service template updated successfully
- *       400:
- *         description: Invalid input data
- *       401:
- *         description: Unauthorized
- *       403:
- *         description: Access denied - Admin role required
- *       404:
- *         description: Service template not found
- */
-// FIXED: Using auth(['admin']) instead of auth.admin
-router.put('/admin/templates/:id', 
-  auth(['admin']), 
-  AdminServiceController.updateServiceTemplate
+router.post(
+  '/templates',
+  auth(['admin']),
+  upload.single('image'),
+  adminServiceController.createServiceTemplate
 );
 
 /**
@@ -102,36 +106,118 @@ router.put('/admin/templates/:id',
  * /api/admin/templates:
  *   get:
  *     summary: List all service templates
- *     tags: [AdminServiceTemplates]
+ *     tags: [Admin Service Templates]
  *     security:
  *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: category
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [all, active, inactive]
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
  *     responses:
  *       200:
  *         description: List of service templates
- *         content:
- *           application/json:
- *             schema:
- *               type: array
- *               items:
- *                 type: object
- *                 properties:
- *                   id:
- *                     type: string
- *                   name:
- *                     type: string
- *                   description:
- *                     type: string
- *                   price:
- *                     type: number
  *       401:
  *         description: Unauthorized
- *       403:
- *         description: Access denied - Admin role required
  */
-// FIXED: Using auth(['admin']) instead of auth.admin
-router.get('/admin/templates', 
-  auth(['admin']), 
-  AdminServiceController.listServiceTemplates
+router.get(
+  '/templates',
+  auth(['admin']),
+  adminServiceController.listServiceTemplates
+);
+
+/**
+ * @swagger
+ * /api/admin/templates/{id}:
+ *   get:
+ *     summary: Get a single service template by ID
+ *     tags: [Admin Service Templates]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Service template details
+ *       404:
+ *         description: Service template not found
+ */
+router.get(
+  '/templates/:id',
+  auth(['admin']),
+  adminServiceController.getServiceTemplate
+);
+
+/**
+ * @swagger
+ * /api/admin/templates/{id}:
+ *   put:
+ *     summary: Update a service template
+ *     tags: [Admin Service Templates]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name:
+ *                 type: string
+ *               category:
+ *                 type: string
+ *               description:
+ *                 type: string
+ *               image:
+ *                 type: string
+ *                 format: binary
+ *               pricing:
+ *                 type: object
+ *               serviceDetails:
+ *                 type: array
+ *               customizationOptions:
+ *                 type: array
+ *               isActive:
+ *                 type: boolean
+ *     responses:
+ *       200:
+ *         description: Service template updated successfully
+ *       404:
+ *         description: Service template not found
+ */
+router.put(
+  '/templates/:id',
+  auth(['admin']),
+  upload.single('image'),
+  adminServiceController.updateServiceTemplate
 );
 
 /**
@@ -139,256 +225,62 @@ router.get('/admin/templates',
  * /api/admin/templates/{id}:
  *   delete:
  *     summary: Delete a service template
- *     tags: [AdminServiceTemplates]
+ *     tags: [Admin Service Templates]
  *     security:
  *       - bearerAuth: []
  *     parameters:
- *       - name: id
- *         in: path
+ *       - in: path
+ *         name: id
  *         required: true
  *         schema:
  *           type: string
- *         description: The ID of the service template to delete
  *     responses:
  *       200:
  *         description: Service template deleted successfully
- *       401:
- *         description: Unauthorized
- *       403:
- *         description: Access denied - Admin role required
  *       404:
  *         description: Service template not found
  */
-// Added delete route for completeness
-router.delete('/admin/templates/:id', 
-  auth(['admin']), 
-  AdminServiceController.deleteServiceTemplate
+router.delete(
+  '/templates/:id',
+  auth(['admin']),
+  adminServiceController.deleteServiceTemplate
 );
 
 /**
  * @swagger
- * tags:
- *   name: ProfessionalServices
- *   description: Routes for managing custom services by professionals
- */
-
-/**
- * @swagger
- * /api/professional/services:
- *   post:
- *     summary: Create a custom service
- *     tags: [ProfessionalServices]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               name:
- *                 type: string
- *                 description: The name of the custom service
- *               category:
- *                 type: string
- *                 description: The category of the custom service (must match professional specialization)
- *               description:
- *                 type: string
- *                 description: Detailed description of the service
- *               pricing:
- *                 type: object
- *                 description: Pricing details for the custom service
- *                 required:
- *                   - basePrice
- *                 properties:
- *                   basePrice:
- *                     type: number
- *                     description: Base price of the service
- *               serviceDetails:
- *                 type: object
- *                 description: Additional details about the service
- *               customizationOptions:
- *                 type: object
- *                 description: Customization options for the service
- *     responses:
- *       201:
- *         description: Custom service created successfully
- *       400:
- *         description: Invalid input data
- *       401:
- *         description: Unauthorized
- *       403:
- *         description: Access denied - Professional role required
- */
-// FIXED: Using auth(['professional']) instead of auth.professional
-router.post('/professional/services', 
-  auth(['professional']), 
-  ProfessionalServiceController.createCustomService
-);
-
-/**
- * @swagger
- * /api/professional/services/{id}:
- *   put:
- *     summary: Update an existing custom service
- *     tags: [ProfessionalServices]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - name: id
- *         in: path
- *         required: true
- *         schema:
- *           type: string
- *         description: The ID of the custom service to update
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               name:
- *                 type: string
- *               description:
- *                 type: string
- *               price:
- *                 type: number
- *     responses:
- *       200:
- *         description: Custom service updated successfully
- *       400:
- *         description: Invalid input data
- *       401:
- *         description: Unauthorized
- *       403:
- *         description: Access denied - Professional role required
- *       404:
- *         description: Custom service not found
- */
-// FIXED: Using auth(['professional']) instead of auth.professional
-router.put('/professional/services/:id', 
-  auth(['professional']), 
-  ProfessionalServiceController.updateCustomService
-);
-
-/**
- * @swagger
- * /api/professional/services:
- *   get:
- *     summary: List all custom services for a professional
- *     tags: [ProfessionalServices]
- *     security:
- *       - bearerAuth: []
- *     responses:
- *       200:
- *         description: List of custom services
- *         content:
- *           application/json:
- *             schema:
- *               type: array
- *               items:
- *                 type: object
- *                 properties:
- *                   id:
- *                     type: string
- *                   name:
- *                     type: string
- *                   description:
- *                     type: string
- *                   price:
- *                     type: number
- *       401:
- *         description: Unauthorized
- *       403:
- *         description: Access denied - Professional role required
- */
-// FIXED: Using auth(['professional']) instead of auth.professional
-router.get('/professional/services', 
-  auth(['professional']), 
-  ProfessionalServiceController.listProfessionalServices
-);
-
-/**
- * @swagger
- * /api/professional/services/{id}:
- *   delete:
- *     summary: Delete a custom service
- *     tags: [ProfessionalServices]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - name: id
- *         in: path
- *         required: true
- *         schema:
- *           type: string
- *         description: The ID of the custom service to delete
- *     responses:
- *       200:
- *         description: Custom service deleted successfully
- *       401:
- *         description: Unauthorized
- *       403:
- *         description: Access denied - Professional role required
- *       404:
- *         description: Custom service not found
- */
-// Added delete route for completeness
-router.delete('/professional/services/:id', 
-  auth(['professional']), 
-  ProfessionalServiceController.deleteCustomService
-);
-
-/**
- * @swagger
- * /api/professional/services/{id}/toggle:
+ * /api/admin/templates/{id}/status:
  *   patch:
- *     summary: Toggle service availability (enable/disable)
- *     tags: [ProfessionalServices]
+ *     summary: Update service template status (active/inactive)
+ *     tags: [Admin Service Templates]
  *     security:
  *       - bearerAuth: []
  *     parameters:
- *       - name: id
- *         in: path
+ *       - in: path
+ *         name: id
  *         required: true
  *         schema:
  *           type: string
- *         description: The ID of the custom service to toggle
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - isActive
+ *             properties:
+ *               isActive:
+ *                 type: boolean
  *     responses:
  *       200:
- *         description: Service availability toggled successfully
- *       401:
- *         description: Unauthorized
- *       403:
- *         description: Access denied - Professional role required
+ *         description: Service template status updated
  *       404:
- *         description: Custom service not found
+ *         description: Service template not found
  */
-// Added toggle route for service availability
-router.patch('/professional/services/:id/toggle', 
-  auth(['professional']), 
-  ProfessionalServiceController.toggleServiceAvailability
+router.patch(
+  '/templates/:id/status',
+  auth(['admin']),
+  adminServiceController.updateServiceStatus
 );
-
-// Debug routes for testing auth
-router.get('/admin/test-auth', auth(['admin']), (req, res) => {
-  console.log('🔐 [ADMIN-SERVICE-TEST] Admin auth test successful');
-  res.json({
-    success: true,
-    message: 'Admin service auth working',
-    user: { id: req.user._id, role: req.userRole }
-  });
-});
-
-router.get('/professional/test-auth', auth(['professional']), (req, res) => {
-  console.log('🔐 [PROF-SERVICE-TEST] Professional auth test successful');
-  res.json({
-    success: true,
-    message: 'Professional service auth working',
-    user: { id: req.user._id, role: req.userRole }
-  });
-});
 
 module.exports = router;

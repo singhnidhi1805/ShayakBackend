@@ -177,94 +177,293 @@ async createBooking(req, res) {
   /**
    * Professional accepts booking
    */
-  async acceptBooking(req, res) {
-    console.log('👨‍🔧 [BOOKING-API] Professional accepting booking');
-    console.log('📋 [BOOKING-API] Booking ID:', req.params.bookingId);
-    console.log('👤 [BOOKING-API] Professional ID:', req.user._id);
+async acceptBooking(req, res) {
+  console.log('👨‍🔧 [BOOKING-API] Professional accepting booking');
+  console.log('📋 [BOOKING-API] Booking ID from params:', req.params.bookingId);
+  console.log('👤 [BOOKING-API] Professional ID from req.user:', req.user._id);
+  console.log('👤 [BOOKING-API] Full req.user:', JSON.stringify(req.user, null, 2));
+  
+  try {
+    const bookingId = req.params.bookingId;
+    const professionalId = req.user._id; // ✅ Extract from req.user, not parameters
     
+    console.log(`🎯 [BOOKING-API] Attempting to accept booking: ${bookingId}`);
+    console.log(`👤 [BOOKING-API] By professional: ${professionalId}`);
+    
+    // CRITICAL: Validate that professionalId exists
+    if (!professionalId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Professional ID not found in authentication token'
+      });
+    }
+    
+    // CRITICAL: Validate that bookingId exists
+    if (!bookingId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Booking ID is required'
+      });
+    }
+
+    // CRITICAL: Validate ObjectId formats
+    if (!mongoose.Types.ObjectId.isValid(bookingId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid booking ID format'
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(professionalId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid professional ID format'
+      });
+    }
+
+    // ✅ CALL THE SERVICE METHOD (which you need to create separately)
+    // Option 1: If you have a BookingService, call it
+    // const booking = await BookingService.acceptBooking(bookingId, professionalId);
+    
+    // Option 2: If you don't have a separate service, implement the logic here:
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
     try {
-    const { bookingId } = req.body;
-    const professionalId = req.user.professionalId || req.user._id;
+      // Convert to ObjectId explicitly
+      const bookingObjectId = new mongoose.Types.ObjectId(bookingId);
+      const professionalObjectId = new mongoose.Types.ObjectId(professionalId);
+      
+      console.log(`🔍 [BOOKING-API] Searching for booking with ObjectId: ${bookingObjectId}`);
+      
+      // Find booking
+      const booking = await Booking.findById(bookingObjectId)
+        .populate('user', 'name phone currentLocation')
+        .populate('service', 'name category pricing')
+        .session(session);
+      
+      console.log(`🔍 [BOOKING-API] Booking found: ${!!booking}`);
+      
+      if (!booking) {
+        await session.abortTransaction();
+        console.error(`❌ [BOOKING-API] No booking found with ID: ${bookingObjectId}`);
+        return res.status(404).json({
+          success: false,
+          message: 'Booking not found or already accepted'
+        });
+      }
+      
+      console.log(`📋 [BOOKING-API] Current booking status: ${booking.status}`);
+      console.log(`📋 [BOOKING-API] Current booking professional: ${booking.professional}`);
+      
+      // Check if booking is still pending
+      if (booking.status !== 'pending') {
+        await session.abortTransaction();
+        return res.status(400).json({
+          success: false,
+          message: `Cannot accept booking: booking is already ${booking.status}`
+        });
+      }
+      
+      // Check if booking already has a professional assigned
+      if (booking.professional) {
+        await session.abortTransaction();
+        return res.status(400).json({
+          success: false,
+          message: 'Booking already accepted by another professional'
+        });
+      }
+      
+      // Find professional
+      const professional = await Professional.findById(professionalObjectId).session(session);
+      
+      if (!professional) {
+        await session.abortTransaction();
+        console.error(`❌ [BOOKING-API] No professional found with ID: ${professionalObjectId}`);
+        return res.status(404).json({
+          success: false,
+          message: 'Professional not found'
+        });
+      }
+      
+      console.log(`👨‍🔧 [BOOKING-API] Professional found: ${professional.name}`);
+      console.log(`🔧 [BOOKING-API] Professional specializations: ${professional.specializations}`);
+      console.log(`📦 [BOOKING-API] Service category: ${booking.service.category}`);
+      
+      // Verify professional specialization
+      if (!professional.specializations.includes(booking.service.category)) {
+        await session.abortTransaction();
+        return res.status(400).json({
+          success: false,
+          message: `Service category '${booking.service.category}' does not match professional specializations: ${professional.specializations.join(', ')}`
+        });
+      }
+      
+      // Check professional availability
+      if (!professional.isAvailable) {
+        await session.abortTransaction();
+        return res.status(400).json({
+          success: false,
+          message: 'Professional is not currently available'
+        });
+      }
+      
+      console.log('📍 [BOOKING-API] Calculating initial ETA...');
+      
+      // Calculate initial ETA and distance
+      let initialETA = null;
+      let initialDistance = null;
+      
+      if (professional.currentLocation && professional.currentLocation.coordinates && 
+          booking.location && booking.location.coordinates) {
+        
+        // Calculate distance using Haversine formula
+        const calculateDistance = (lat1, lon1, lat2, lon2) => {
+          const R = 6371; // Radius of the Earth in km
+          const dLat = (lat2 - lat1) * Math.PI / 180;
+          const dLon = (lon2 - lon1) * Math.PI / 180;
+          const a = 
+            Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+            Math.sin(dLon/2) * Math.sin(dLon/2);
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+          return R * c;
+        };
+        
+        initialDistance = calculateDistance(
+          professional.currentLocation.coordinates[1], // Professional lat
+          professional.currentLocation.coordinates[0], // Professional lng
+          booking.location.coordinates[1], // Booking lat
+          booking.location.coordinates[0]  // Booking lng
+        );
+        
+        // Calculate ETA (assuming average speed of 30 km/h)
+        initialETA = Math.round((initialDistance / 30) * 60);
+        
+        console.log('📏 [BOOKING-API] Initial distance:', initialDistance.toFixed(2), 'km');
+        console.log('⏱️ [BOOKING-API] Initial ETA:', initialETA, 'minutes');
+      } else {
+        console.log('⚠️ [BOOKING-API] Professional or booking location not available for ETA calculation');
+      }
+      
+      // Update booking
+      booking.professional = professionalObjectId;
+      booking.status = 'accepted';
+      booking.acceptedAt = new Date();
+      
+      // Initialize tracking data
+      if (!booking.tracking) booking.tracking = {};
+      booking.tracking.trackingInitialized = new Date();
+      booking.tracking.initialETA = initialETA;
+      booking.tracking.initialDistance = initialDistance;
+      booking.tracking.isActive = true;
+      
+      // Set professional's initial location in tracking
+      if (professional.currentLocation) {
+        booking.tracking.lastLocation = {
+          type: 'Point',
+          coordinates: professional.currentLocation.coordinates,
+          timestamp: new Date()
+        };
+        booking.tracking.eta = initialETA;
+        booking.tracking.distance = initialDistance;
+      }
+      
+      console.log('💾 [BOOKING-API] Saving booking...');
+      await booking.save({ session });
+      console.log('✅ [BOOKING-API] Booking saved');
+      
+      // Update professional availability
+      professional.isAvailable = false;
+      professional.currentBooking = {
+        bookingId: bookingObjectId,
+        acceptedAt: new Date()
+      };
+      
+      console.log('💾 [BOOKING-API] Saving professional...');
+      await professional.save({ session });
+      console.log('✅ [BOOKING-API] Professional saved');
+      
+      await session.commitTransaction();
+      console.log('✅ [BOOKING-API] Transaction committed');
+      
+      // Populate professional details for response
+      await booking.populate('professional', 'name phone rating currentLocation');
+      
+      console.log('✅ [BOOKING-API] Booking accepted successfully:', booking._id);
+      
+      // Send success response
+      res.status(200).json({
+        success: true,
+        message: 'Booking accepted successfully',
+        data: {
+          booking: {
+            _id: booking._id,
+            status: booking.status,
+            scheduledDate: booking.scheduledDate,
+            location: booking.location,
+            totalAmount: booking.totalAmount,
+            professional: booking.professional,
+            acceptedAt: booking.acceptedAt,
+            tracking: {
+              initialized: true,
+              eta: booking.tracking?.eta,
+              distance: booking.tracking?.distance,
+              initialETA: booking.tracking?.initialETA,
+              initialDistance: booking.tracking?.initialDistance
+            }
+          }
+        }
+      });
 
-    console.log('🎯 Accepting booking:', bookingId);
-
-    const booking = await Booking.findOne({
-      _id: bookingId,
-      professional: professionalId,
-      status: 'pending'
-    }).populate('user').populate('service');
-
-    if (!booking) {
+      // TODO: Send socket notifications (if you have socket.io set up)
+      // this.notifyBookingAccepted(booking, professional, initialETA, initialDistance);
+      
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
+    
+  } catch (error) {
+    console.error('❌ [BOOKING-API] Error accepting booking:', error.message);
+    console.error('❌ [BOOKING-API] Error stack:', error.stack);
+    
+    // Handle specific error cases
+    if (error.message === 'Booking not found') {
       return res.status(404).json({
         success: false,
         message: 'Booking not found or already accepted'
       });
     }
-
-    // Get professional's current location
-    const professional = await Professional.findById(professionalId);
     
-    if (!professional.currentLocation || !professional.currentLocation.coordinates) {
+    if (error.message.includes('already accepted') || error.message.includes('already')) {
       return res.status(400).json({
         success: false,
-        message: 'Please enable location services to accept booking'
+        message: error.message
       });
     }
-
-    // Calculate initial distance and ETA
-    const distance = booking.calculateDistance(
-      professional.currentLocation.coordinates[1],
-      professional.currentLocation.coordinates[0],
-      booking.location.coordinates[1],
-      booking.location.coordinates[0]
-    );
     
-    const estimatedETA = Math.round((distance / 30) * 60); // 30 km/h average speed
-
-    // Update booking status and AUTOMATICALLY START TRACKING
-    booking.status = 'accepted';
-    booking.acceptedAt = new Date();
+    if (error.message.includes('not available')) {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
     
-    // Initialize tracking automatically
-    booking.tracking = {
-      isActive: true,
-      trackingInitialized: new Date(),
-      trackingStarted: new Date(),
-      liveTrackingEnabled: true,
-      initialDistance: distance,
-      distance: distance,
-      initialETA: estimatedETA,
-      eta: estimatedETA,
-      lastLocation: {
-        type: 'Point',
-        coordinates: professional.currentLocation.coordinates,
-        timestamp: new Date(),
-        accuracy: professional.currentLocation.accuracy || null
-      },
-      lastUpdate: new Date()
-    };
-
-    await booking.save();
-
-    console.log('✅ Booking accepted and tracking started automatically');
-
-    res.status(200).json({
-      success: true,
-      message: 'Booking accepted and tracking started automatically',
-      booking,
-      tracking: {
-        isActive: true,
-        distance,
-        eta: estimatedETA
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ Error accepting booking:', error);
+    if (error.message.includes('does not match')) {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+    
+    // Generic error response
     res.status(500).json({
       success: false,
-      message: 'Failed to accept booking',
-      error: error.message
+      message: error.message || 'Failed to accept booking',
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 };
@@ -946,66 +1145,83 @@ async getBookingById(req, res) {
   /**
    * Start a service
    */
-  async startService(req, res) {
-    console.log('🚀 [BOOKING-API] Starting service for booking:', req.params.bookingId);
+async startService(req, res) {
+  console.log('🚀 [BOOKING-CONTROLLER] Starting service for booking');
+  console.log('📋 [BOOKING-CONTROLLER] Booking ID:', req.params.bookingId);
+  console.log('👤 [BOOKING-CONTROLLER] Professional ID:', req.user._id);
+  
+  try {
+    // ✅ CORRECT: Extract from req.params (not req.body!)
+    const bookingId = req.params.bookingId;  // ← From URL parameter
+    const professionalId = req.user._id;      // ← From auth middleware
     
-   try {
-    const { bookingId } = req.body;
-    const professionalId = req.user.professionalId || req.user._id;
+    // Validate inputs
+    if (!bookingId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Booking ID is required'
+      });
+    }
 
-    console.log('🚀 Starting service:', bookingId);
+    if (!mongoose.Types.ObjectId.isValid(bookingId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid booking ID format'
+      });
+    }
 
-    const booking = await Booking.findOne({
-      _id: bookingId,
-      professional: professionalId,
-      status: 'accepted'
+    console.log('✅ [BOOKING-CONTROLLER] Validation passed, calling service...');
+    
+    // ✅ CORRECT: Call SERVICE method with direct parameters
+    const booking = await EnhancedBookingService.startService(
+      bookingId,        // ← Direct parameter
+      professionalId    // ← Direct parameter
+    );
+    
+    console.log('✅ [BOOKING-CONTROLLER] Service started successfully');
+
+    // Send response
+    res.status(200).json({
+      success: true,
+      message: 'Service started successfully',
+      data: {
+        booking: {
+          _id: booking._id,
+          status: booking.status,
+          tracking: {
+            startedAt: booking.tracking?.startedAt,
+            liveTrackingEnabled: booking.tracking?.liveTrackingEnabled,
+            eta: booking.tracking?.eta,
+            distance: booking.tracking?.distance
+          }
+        }
+      }
     });
 
-    if (!booking) {
+  } catch (error) {
+    console.error('❌ [BOOKING-CONTROLLER] Error starting service:', error.message);
+    
+    // Handle specific errors
+    if (error.message === 'Booking not found') {
       return res.status(404).json({
         success: false,
         message: 'Booking not found or not in accepted status'
       });
     }
-
-    // Get professional's current location (arrival location)
-    const professional = await Professional.findById(professionalId);
     
-    // Mark service as started
-    booking.status = 'in_progress';
-    booking.tracking.startedAt = new Date();
-    booking.tracking.arrivedAt = new Date();
+    if (error.message.includes('cannot start') || 
+        error.message.includes('not assigned')) {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
     
-    if (professional.currentLocation?.coordinates) {
-      booking.tracking.arrivalLocation = {
-        type: 'Point',
-        coordinates: professional.currentLocation.coordinates,
-        timestamp: new Date()
-      };
-    }
-
-    // Calculate total travel time
-    if (booking.tracking.trackingStarted) {
-      const travelTime = (new Date() - booking.tracking.trackingStarted) / 1000 / 60;
-      booking.tracking.totalTravelTime = Math.round(travelTime);
-    }
-
-    await booking.save();
-
-    console.log('✅ Service started');
-
-    res.status(200).json({
-      success: true,
-      message: 'Service started successfully',
-      booking
-    });
-
-  } catch (error) {
-    console.error('❌ Error starting service:', error);
+    // Generic error
     res.status(500).json({
       success: false,
       message: 'Failed to start service',
-      error: error.message
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -1190,166 +1406,180 @@ async getBookingById(req, res) {
    * Verify OTP and mark service as completed
    * Professional enters the OTP received from customer
    */
-  async verifyServiceCompletionOTP(req, res) {
-    console.log('🔍 [BOOKING-API] Verifying service completion OTP');
-    
-    try {
-      const { bookingId } = req.params;
-      const { otp } = req.body;
-      const professionalId = req.user._id;
+async verifyServiceCompletionOTP(req, res) {
+  console.log('🔍 [BOOKING-API] Verifying service completion OTP');
+  
+  try {
+    const { bookingId } = req.params;
+    const { otp } = req.body;
+    const professionalId = req.user._id;
 
-      console.log('📋 [BOOKING-API] Booking ID:', bookingId);
-      console.log('🔢 [BOOKING-API] OTP length:', otp?.length);
+    console.log('📋 [BOOKING-API] Booking ID:', bookingId);
+    console.log('🔢 [BOOKING-API] OTP length:', otp?.length);
 
-      // Validate input
-      if (!bookingId || !otp) {
-        return res.status(400).json({
-          success: false,
-          message: 'Booking ID and OTP are required'
-        });
-      }
-
-      if (!mongoose.Types.ObjectId.isValid(bookingId)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid booking ID format'
-        });
-      }
-
-      // Validate OTP format
-      if (!/^\d{4,6}$/.test(otp)) {
-        return res.status(400).json({
-          success: false,
-          message: 'OTP must be 4-6 digits'
-        });
-      }
-
-      // Find booking
-      const booking = await Booking.findOne({
-        _id: bookingId,
-        professional: professionalId,
-        status: 'in_progress'
-      }).populate('user', 'name phone email').populate('service', 'name category pricing');
-
-      if (!booking) {
-        console.log('❌ [BOOKING-API] Booking not found or not in progress');
-        return res.status(404).json({
-          success: false,
-          message: 'Booking not found or not in progress'
-        });
-      }
-
-      // Check if OTP was sent
-      if (!booking.completionOTPSession) {
-        console.log('❌ [BOOKING-API] OTP not sent yet');
-        return res.status(400).json({
-          success: false,
-          message: 'OTP not sent yet. Please request OTP first.'
-        });
-      }
-
-      // Check OTP expiry (10 minutes)
-      const otpAge = (new Date() - new Date(booking.completionOTPSentAt)) / 1000 / 60;
-      if (otpAge > 10) {
-        console.log('❌ [BOOKING-API] OTP expired. Age:', otpAge.toFixed(2), 'minutes');
-        return res.status(400).json({
-          success: false,
-          message: 'OTP expired. Please request a new one.',
-          expired: true
-        });
-      }
-
-      // Check attempt limit (max 3 attempts)
-      if (booking.completionOTPAttempts >= 3) {
-        console.log('❌ [BOOKING-API] Max OTP attempts reached');
-        return res.status(400).json({
-          success: false,
-          message: 'Maximum OTP attempts reached. Please request a new OTP.',
-          maxAttemptsReached: true
-        });
-      }
-
-      // Verify OTP using Twilio Verify API
-      console.log('🔐 [BOOKING-API] Verifying OTP with Twilio...');
-      const isValid = await twilioService.verifyOtp(booking.user.phone, otp);
-
-      if (!isValid) {
-        // Increment attempt count
-        booking.completionOTPAttempts = (booking.completionOTPAttempts || 0) + 1;
-        await booking.save();
-
-        console.log('❌ [BOOKING-API] Invalid OTP. Attempts:', booking.completionOTPAttempts);
-        
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid OTP. Please try again.',
-          attemptsRemaining: 3 - booking.completionOTPAttempts
-        });
-      }
-
-      console.log('✅ [BOOKING-API] OTP verified successfully');
-
-      // AUTOMATICALLY STOP TRACKING
-      if (booking.tracking) {
-        booking.tracking.isActive = false;
-        booking.tracking.liveTrackingEnabled = false;
-        booking.tracking.trackingEnded = new Date();
-        
-        // Calculate total service time
-        if (booking.tracking.startedAt) {
-          const serviceTime = (new Date() - new Date(booking.tracking.startedAt)) / 1000 / 60;
-          booking.tracking.totalServiceTime = Math.round(serviceTime);
-        }
-        
-        console.log('🛑 [BOOKING-API] Tracking stopped automatically');
-      }
-
-      // Mark service as completed
-      booking.status = 'completed';
-      booking.completedAt = new Date();
-      booking.completionOTPVerifiedAt = new Date();
-      await booking.save();
-
-      // Calculate payment breakdown
-      const serviceAmount = booking.totalAmount || booking.service?.pricing?.basePrice || 0;
-      const additionalCharges = booking.additionalCharges || [];
-      
-      const paymentBreakdown = this.calculatePaymentBreakdown(
-        serviceAmount,
-        additionalCharges
-      );
-
-      console.log('✅ [BOOKING-API] Service completed successfully');
-      console.log('💰 [BOOKING-API] Payment breakdown:', paymentBreakdown);
-
-      res.status(200).json({
-        success: true,
-        message: 'Service completed successfully and tracking stopped',
-        data: {
-          booking: {
-            _id: booking._id,
-            status: booking.status,
-            completedAt: booking.completedAt,
-            tracking: {
-              isActive: false,
-              trackingEnded: booking.tracking?.trackingEnded,
-              totalTravelTime: booking.tracking?.totalTravelTime,
-              totalServiceTime: booking.tracking?.totalServiceTime
-            }
-          },
-          paymentBreakdown
-        }
-      });
-
-    } catch (error) {
-      console.error('❌ [BOOKING-API] Error verifying service completion OTP:', error);
-      res.status(500).json({
+    // Validate input
+    if (!bookingId || !otp) {
+      return res.status(400).json({
         success: false,
-        message: 'Failed to verify OTP',
-        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        message: 'Booking ID and OTP are required'
       });
     }
+
+    if (!mongoose.Types.ObjectId.isValid(bookingId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid booking ID format'
+      });
+    }
+
+    // Validate OTP format
+    if (!/^\d{4,6}$/.test(otp)) {
+      return res.status(400).json({
+        success: false,
+        message: 'OTP must be 4-6 digits'
+      });
+    }
+
+    // Find booking
+    const booking = await Booking.findOne({
+      _id: bookingId,
+      professional: professionalId,
+      status: 'in_progress'
+    }).populate('user', 'name phone email').populate('service', 'name category pricing');
+
+    if (!booking) {
+      console.log('❌ [BOOKING-API] Booking not found or not in progress');
+      return res.status(404).json({
+        success: false,
+        message: 'Booking not found or not in progress'
+      });
+    }
+
+    // Check if OTP was sent
+    if (!booking.completionOTPSession) {
+      console.log('❌ [BOOKING-API] OTP not sent yet');
+      return res.status(400).json({
+        success: false,
+        message: 'OTP not sent yet. Please request OTP first.'
+      });
+    }
+
+    // Check OTP expiry (10 minutes)
+    const otpAge = (new Date() - new Date(booking.completionOTPSentAt)) / 1000 / 60;
+    if (otpAge > 10) {
+      console.log('❌ [BOOKING-API] OTP expired. Age:', otpAge.toFixed(2), 'minutes');
+      return res.status(400).json({
+        success: false,
+        message: 'OTP expired. Please request a new one.',
+        expired: true
+      });
+    }
+
+    // Check attempt limit (max 3 attempts)
+    if (booking.completionOTPAttempts >= 3) {
+      console.log('❌ [BOOKING-API] Max OTP attempts reached');
+      return res.status(400).json({
+        success: false,
+        message: 'Maximum OTP attempts reached. Please request a new OTP.',
+        maxAttemptsReached: true
+      });
+    }
+
+    // Verify OTP using Twilio Verify API
+    console.log('🔐 [BOOKING-API] Verifying OTP with Twilio...');
+    const isValid = await twilioService.verifyOtp(booking.user.phone, otp);
+
+    if (!isValid) {
+      // Increment attempt count
+      booking.completionOTPAttempts = (booking.completionOTPAttempts || 0) + 1;
+      await booking.save();
+
+      console.log('❌ [BOOKING-API] Invalid OTP. Attempts:', booking.completionOTPAttempts);
+      
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid OTP. Please try again.',
+        attemptsRemaining: 3 - booking.completionOTPAttempts
+      });
+    }
+
+    console.log('✅ [BOOKING-API] OTP verified successfully');
+
+    // AUTOMATICALLY STOP TRACKING
+    if (booking.tracking) {
+      booking.tracking.isActive = false;
+      booking.tracking.liveTrackingEnabled = false;
+      booking.tracking.trackingEnded = new Date();
+      
+      // Calculate total service time
+      if (booking.tracking.startedAt) {
+        const serviceTime = (new Date() - new Date(booking.tracking.startedAt)) / 1000 / 60;
+        booking.tracking.totalServiceTime = Math.round(serviceTime);
+      }
+      
+      console.log('🛑 [BOOKING-API] Tracking stopped automatically');
+    }
+
+    // Mark service as completed
+    booking.status = 'completed';
+    booking.completedAt = new Date();
+    booking.completionOTPVerifiedAt = new Date();
+    await booking.save();
+
+    // ✅ FIXED: Calculate payment breakdown inline
+    const serviceAmount = booking.totalAmount || booking.service?.pricing?.basePrice || 0;
+    const additionalCharges = booking.additionalCharges || [];
+    
+    const additionalAmount = additionalCharges.reduce(
+      (sum, charge) => sum + (charge.amount || 0),
+      0
+    );
+    const totalAmount = serviceAmount + additionalAmount;
+    const commissionRate = 0.15;
+    const platformCommission = Math.round(totalAmount * commissionRate * 100) / 100;
+    const professionalPayout = Math.round((totalAmount - platformCommission) * 100) / 100;
+
+    const paymentBreakdown = {
+      serviceAmount: parseFloat(serviceAmount.toFixed(2)),
+      additionalAmount: parseFloat(additionalAmount.toFixed(2)),
+      totalAmount: parseFloat(totalAmount.toFixed(2)),
+      platformCommission: parseFloat(platformCommission.toFixed(2)),
+      professionalPayout: parseFloat(professionalPayout.toFixed(2)),
+      commissionRate,
+      additionalCharges
+    };
+
+    console.log('✅ [BOOKING-API] Service completed successfully');
+    console.log('💰 [BOOKING-API] Payment breakdown:', paymentBreakdown);
+
+    res.status(200).json({
+      success: true,
+      message: 'Service completed successfully and tracking stopped',
+      data: {
+        booking: {
+          _id: booking._id,
+          status: booking.status,
+          completedAt: booking.completedAt,
+          tracking: {
+            isActive: false,
+            trackingEnded: booking.tracking?.trackingEnded,
+            totalTravelTime: booking.tracking?.totalTravelTime,
+            totalServiceTime: booking.tracking?.totalServiceTime
+          }
+        },
+        paymentBreakdown
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ [BOOKING-API] Error verifying service completion OTP:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to verify OTP',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
+}
 
   async updateTrackingLocation (req, res) {
      try {
