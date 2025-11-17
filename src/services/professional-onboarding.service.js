@@ -102,99 +102,101 @@ class ProfessionalOnboardingService {
     }
   }
   
-  async uploadDocument(professionalId, documentType, file) {
-    try {
-      // Validate file first
-      if (!file?.buffer) {
-        throw createError(400, 'Missing file data');
-      }
-
-      const maxSize = 5 * 1024 * 1024;
-      if (file.size > maxSize) {
-        throw createError(400, `File too large. Maximum size is ${maxSize / (1024 * 1024)}MB`);
-      }
-
-      const allowedTypes = ['image/jpeg', 'image/png', 'application/pdf'];
-      if (!allowedTypes.includes(file.mimetype)) {
-        throw createError(400, `Invalid file type. Allowed types: ${allowedTypes.join(', ')}`);
-      }
-
-      // Get professional document for file cleanup - use _id directly
-      const professional = await Professional.findById(professionalId);
-      if (!professional) {
-        throw createError(404, 'Professional not found');
-      }
-
-      // Handle S3 operations
-      let fileUrl;
-      const existingDoc = professional.documents.find(doc => doc.type === documentType);
-      if (existingDoc) {
-        try {
-          await deleteFromS3(existingDoc.fileUrl);
-        } catch (s3Error) {
-          logger.warn('Failed to delete old document:', s3Error);
-        }
-      }
-
-      const fileKey = `documents/${professional._id}/${documentType}_${Date.now()}`;
-      fileUrl = await uploadToS3(file.buffer, fileKey, file.mimetype);
-
-      // Update document in one atomic operation - use _id directly
-      const updatedProfessional = await Professional.findByIdAndUpdate(
-        professionalId,
-        {
-          $set: {
-            [`documentsStatus.${documentType}`]: 'pending',
-            status: 'under_review',
-            onboardingStep: 'documents'
-          },
-          $push: {
-            documents: {
-              $each: [{
-                type: documentType,
-                fileUrl,
-                fileName: file.originalname,
-                mimeType: file.mimetype,
-                fileSize: file.size,
-                uploadedAt: new Date(),
-                status: 'pending'
-              }],
-              $sort: { uploadedAt: -1 }
-            }
-          }
-        },
-        { new: true, runValidators: true }
-      );
-
-      if (!updatedProfessional) {
-        throw createError(500, 'Failed to update professional record');
-      }
-
-      // Send admin notification asynchronously
-      this.emailService.sendEmail({
-        template: 'new-document-upload',
-        to: process.env.ADMIN_EMAIL,
-        subject: 'New Document Upload',
-        data: {
-          professionalName: updatedProfessional.name,
-          documentType,
-          professionalId: updatedProfessional._id
-        }
-      }).catch(error => {
-        logger.warn('Admin notification failed:', error);
-      });
-
-      return { 
-        success: true, 
-        documentId: updatedProfessional.documents.find(doc => doc.type === documentType)._id,
-        status: 'pending'
-      };
-    } catch (error) {
-      logger.error('Document upload error:', error);
-      throw error;
+ async uploadDocument(professionalId, documentType, file) {
+  try {
+    // Validate file first
+    if (!file?.buffer) {
+      throw createError(400, 'Missing file data');
     }
-  }
 
+    const maxSize = 5 * 1024 * 1024;
+    if (file.size > maxSize) {
+      throw createError(400, `File too large. Maximum size is ${maxSize / (1024 * 1024)}MB`);
+    }
+
+    const allowedTypes = ['image/jpeg', 'image/png', 'application/pdf'];
+    if (!allowedTypes.includes(file.mimetype)) {
+      throw createError(400, `Invalid file type. Allowed types: ${allowedTypes.join(', ')}`);
+    }
+
+    // Get professional document for file cleanup
+    const professional = await Professional.findById(professionalId);
+    if (!professional) {
+      throw createError(404, 'Professional not found');
+    }
+
+    // Handle S3 operations
+    let s3Key;
+    const existingDoc = professional.documents.find(doc => doc.type === documentType);
+    if (existingDoc) {
+      try {
+        // Delete old file using s3Key
+        await deleteFromS3(existingDoc.s3Key);
+      } catch (s3Error) {
+        logger.warn('Failed to delete old document:', s3Error);
+      }
+    }
+
+    // Upload to S3 and get s3Key
+    const fileKey = `documents/${professional._id}/${documentType}_${Date.now()}`;
+    const uploadResult = await uploadToS3(file.buffer, fileKey, file.mimetype);
+    s3Key = uploadResult.s3Key;
+
+    // Update document in one atomic operation - CHANGED: store s3Key instead of fileUrl
+    const updatedProfessional = await Professional.findByIdAndUpdate(
+      professionalId,
+      {
+        $set: {
+          [`documentsStatus.${documentType}`]: 'pending',
+          status: 'under_review',
+          onboardingStep: 'documents'
+        },
+        $push: {
+          documents: {
+            $each: [{
+              type: documentType,
+              s3Key: s3Key, // CHANGED: Use s3Key instead of fileUrl
+              fileName: file.originalname,
+              mimeType: file.mimetype,
+              fileSize: file.size,
+              uploadedAt: new Date(),
+              status: 'pending'
+            }],
+            $sort: { uploadedAt: -1 }
+          }
+        }
+      },
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedProfessional) {
+      throw createError(500, 'Failed to update professional record');
+    }
+
+    // Send admin notification asynchronously
+    this.emailService.sendEmail({
+      template: 'new-document-upload',
+      to: process.env.ADMIN_EMAIL,
+      subject: 'New Document Upload',
+      data: {
+        professionalName: updatedProfessional.name,
+        documentType,
+        professionalId: updatedProfessional._id
+      }
+    }).catch(error => {
+      logger.warn('Admin notification failed:', error);
+    });
+
+    return { 
+      success: true, 
+      documentId: updatedProfessional.documents.find(doc => doc.type === documentType)._id,
+      status: 'pending'
+    };
+  } catch (error) {
+    logger.error('Document upload error:', error);
+    throw error;
+  }
+}
   async verifyDocument(professionalId, documentId, adminId, isValid, remarks) {
     try {
       // Fetch current state
@@ -347,101 +349,144 @@ class ProfessionalOnboardingService {
       throw error;
     }
   }
-  async getOnboardingStatus(professionalId) {
-    try {
-      // Use _id directly to find the professional
-      const professional = await Professional.findById(professionalId);
-      if (!professional) {
-        throw createError(404, 'Professional not found');
-      }
 
-      const requiredDocuments = ['id_proof', 'address_proof'];
-      const optionalDocuments = ['professional_certificate'];
-      const allDocuments = [...requiredDocuments, ...optionalDocuments];
-      
-      const uploadedDocuments = professional.documents.map(doc => doc.type);
-      
-      // Get progress data based on onboarding step
-      let progressData = {};
-      switch (professional.onboardingStep) {
-        case 'personal_details':
-          progressData.personalDetails = {
-            name: professional.name,
-            email: professional.email,
-            alternatePhone: professional.alternatePhone,
-            address: professional.address,
-            city: professional.city,
-            state: professional.state,
-            pincode: professional.pincode
-          };
-          break;
-        case 'specializations':
-          progressData.personalDetails = {
-            name: professional.name,
-            email: professional.email,
-            alternatePhone: professional.alternatePhone,
-            address: professional.address,
-            city: professional.city,
-            state: professional.state,
-            pincode: professional.pincode
-          };
-          progressData.specializations = professional.specializations;
-          break;
-        case 'documents':
-        case 'completed':
-          progressData.personalDetails = {
-            name: professional.name,
-            email: professional.email,
-            alternatePhone: professional.alternatePhone,
-            address: professional.address,
-            city: professional.city,
-            state: professional.state,
-            pincode: professional.pincode
-          };
-          progressData.specializations = professional.specializations;
-          progressData.documents = {};
-          
-          // Add document info for each uploaded document
-          professional.documents.forEach(doc => {
-            if (allDocuments.includes(doc.type)) {
-              progressData.documents[doc.type] = {
-                uri: doc.fileUrl,
-                id: doc._id,
-                status: doc.status
-              };
-            }
-          });
-          break;
-      }
-      
-      return {
-        currentStatus: professional.status,
-        onboardingStep: professional.onboardingStep,
-        employeeId: professional.employeeId,
-        progress: progressData,
-        missingDocuments: requiredDocuments.filter(
-          doc => !uploadedDocuments.includes(doc)
-        ),
-        documentStatus: professional.documentsStatus,
-        pendingVerification: professional.documents
-          .filter(doc => doc.status === 'pending')
-          .map(doc => ({
-            type: doc.type,
-            uploadedAt: doc.uploadedAt
-          })),
-        rejectedDocuments: professional.documents
-          .filter(doc => doc.status === 'rejected')
-          .map(doc => ({
-            type: doc.type,
-            remarks: doc.remarks
-          })),
-        isComplete: professional.status === 'verified'
-      };
-    } catch (error) {
-      logger.error('Status check error:', error);
-      throw error;
+  async deleteDocument(professionalId, documentId) {
+  try {
+    console.log('🗑️ [SERVICE] Deleting document:', documentId);
+    
+    const professional = await Professional.findById(professionalId);
+    if (!professional) {
+      throw createError(404, 'Professional not found');
     }
+
+    // Find document
+    const document = professional.documents.id(documentId);
+    if (!document) {
+      throw createError(404, 'Document not found');
+    }
+
+    // Delete from S3 using s3Key
+    if (document.s3Key) {
+      try {
+        await deleteFromS3(document.s3Key);
+        console.log('✅ [SERVICE] Document deleted from S3');
+      } catch (err) {
+        logger.warn('Failed to delete document from S3:', err);
+      }
+    }
+
+    // Remove from array
+    professional.documents.pull(documentId);
+
+    // Update document status
+    professional.documentsStatus[document.type] = 'not_submitted';
+
+    await professional.save();
+
+    console.log('✅ [SERVICE] Document deleted successfully');
+
+    return { success: true };
+  } catch (error) {
+    logger.error('Delete document service error:', error);
+    throw error;
   }
+}
+ async getOnboardingStatus(professionalId) {
+  try {
+    const professional = await Professional.findById(professionalId);
+    if (!professional) {
+      throw createError(404, 'Professional not found');
+    }
+
+    const requiredDocuments = ['id_proof', 'address_proof'];
+    const optionalDocuments = ['professional_certificate'];
+    const allDocuments = [...requiredDocuments, ...optionalDocuments];
+    
+    const uploadedDocuments = professional.documents.map(doc => doc.type);
+    
+    // Get progress data based on onboarding step
+    let progressData = {};
+    switch (professional.onboardingStep) {
+      case 'personal_details':
+        progressData.personalDetails = {
+          name: professional.name,
+          email: professional.email,
+          alternatePhone: professional.alternatePhone,
+          address: professional.address,
+          city: professional.city,
+          state: professional.state,
+          pincode: professional.pincode
+        };
+        break;
+      case 'specializations':
+        progressData.personalDetails = {
+          name: professional.name,
+          email: professional.email,
+          alternatePhone: professional.alternatePhone,
+          address: professional.address,
+          city: professional.city,
+          state: professional.state,
+          pincode: professional.pincode
+        };
+        progressData.specializations = professional.specializations;
+        break;
+      case 'documents':
+      case 'completed':
+        progressData.personalDetails = {
+          name: professional.name,
+          email: professional.email,
+          alternatePhone: professional.alternatePhone,
+          address: professional.address,
+          city: professional.city,
+          state: professional.state,
+          pincode: professional.pincode
+        };
+        progressData.specializations = professional.specializations;
+        progressData.documents = {};
+        
+        // CHANGED: Only include document metadata, not URLs
+        // URLs will be generated on-demand when needed
+        professional.documents.forEach(doc => {
+          if (allDocuments.includes(doc.type)) {
+            progressData.documents[doc.type] = {
+              id: doc._id,
+              status: doc.status,
+              fileName: doc.fileName
+              // NO fileUrl - will be generated with pre-signed URL when requested
+            };
+          }
+        });
+        break;
+    }
+    
+    return {
+      currentStatus: professional.status,
+      onboardingStep: professional.onboardingStep,
+      employeeId: professional.employeeId,
+      progress: progressData,
+      missingDocuments: requiredDocuments.filter(
+        doc => !uploadedDocuments.includes(doc)
+      ),
+      documentStatus: professional.documentsStatus,
+      pendingVerification: professional.documents
+        .filter(doc => doc.status === 'pending')
+        .map(doc => ({
+          type: doc.type,
+          uploadedAt: doc.uploadedAt
+        })),
+      rejectedDocuments: professional.documents
+        .filter(doc => doc.status === 'rejected')
+        .map(doc => ({
+          type: doc.type,
+          remarks: doc.remarks
+        })),
+      isComplete: professional.status === 'verified'
+    };
+  } catch (error) {
+    logger.error('Status check error:', error);
+    throw error;
+  }
+}
 }
 
 module.exports = new ProfessionalOnboardingService();

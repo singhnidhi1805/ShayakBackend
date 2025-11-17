@@ -7,6 +7,7 @@ const ProfessionalOnboardingService = require('../services/professional-onboardi
 // const GeospatialService = require('../services/geospatial.service'); // Comment if not available
 const logger = require('../config/logger');
 const createError = require('http-errors');
+const { generatePresignedUrls } = require('../utils/fileUpload');
 
 class ProfessionalOnboardingController {
   /**
@@ -294,7 +295,7 @@ class ProfessionalOnboardingController {
   }
 
   /**
-   * Get documents for professional - MISSING METHOD ADDED
+   * Get documents for professional with pre-signed URLs
    * @param {Object} req - Request object
    * @param {Object} res - Response object
    */
@@ -310,16 +311,30 @@ class ProfessionalOnboardingController {
           error: 'Professional not found'
         });
       }
+
+      // Convert to plain object
+      const professionalObj = professional.toObject();
       
-      console.log('✅ [ONBOARD] Documents retrieved:', professional.documents?.length || 0);
+      // Generate pre-signed URLs for all documents (valid for 1 hour)
+      if (professionalObj.documents && professionalObj.documents.length > 0) {
+        professionalObj.documents = await generatePresignedUrls(
+          professionalObj.documents.map(doc => ({
+            ...doc,
+            _id: doc._id.toString()
+          })),
+          3600 // 1 hour expiration
+        );
+      }
+      
+      console.log('✅ [ONBOARD] Documents retrieved:', professionalObj.documents?.length || 0);
       
       res.status(200).json({
         success: true,
-        documents: professional.documents || [],
+        documents: professionalObj.documents || [],
         professional: {
-          id: professional._id,
-          name: professional.name,
-          email: professional.email
+          id: professionalObj._id,
+          name: professionalObj.name,
+          email: professionalObj.email
         }
       });
     } catch (error) {
@@ -333,8 +348,8 @@ class ProfessionalOnboardingController {
     }
   }
 
-  /**
-   * Delete uploaded document - MISSING METHOD ADDED
+/**
+   * Delete uploaded document
    * @param {Object} req - Request object
    * @param {Object} res - Response object
    */
@@ -370,6 +385,8 @@ class ProfessionalOnboardingController {
       });
     }
   }
+
+
 
   /**
    * Get pending professionals for admin review - MISSING METHOD ADDED
@@ -524,6 +541,59 @@ class ProfessionalOnboardingController {
       });
     }
   }
+
+  
+  /**
+   * Get professional documents with pre-signed URLs (for admin)
+   * @param {Object} req - Request object
+   * @param {Object} res - Response object
+   */
+  async getProfessionalDocuments(req, res) {
+    try {
+      const { id } = req.params;
+      
+      console.log('📋 [DOCUMENTS] Getting documents for professional:', id);
+      
+      const professional = await Professional.findById(id);
+      
+      if (!professional) {
+        return res.status(404).json({
+          success: false,
+          error: 'Professional not found'
+        });
+      }
+
+      // Convert to plain object
+      const professionalObj = professional.toObject();
+      
+      // Generate pre-signed URLs for all documents (valid for 1 hour)
+      if (professionalObj.documents && professionalObj.documents.length > 0) {
+        professionalObj.documents = await generatePresignedUrls(
+          professionalObj.documents.map(doc => ({
+            ...doc,
+            _id: doc._id.toString()
+          })),
+          3600 // 1 hour expiration
+        );
+      }
+
+      console.log('✅ [DOCUMENTS] Documents retrieved with pre-signed URLs:', professionalObj.documents?.length || 0);
+
+      res.status(200).json({
+        success: true,
+        professional: professionalObj
+      });
+    } catch (error) {
+      console.error('❌ [DOCUMENTS] Error getting documents:', error);
+      logger.error('Get professional documents error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to get professional documents',
+        details: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+      });
+    }
+  }
+
 
   // ========== EXISTING METHODS FROM YOUR ORIGINAL CONTROLLER ==========
   
