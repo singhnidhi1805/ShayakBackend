@@ -1339,87 +1339,63 @@ async startService(req, res) {
       });
     }
   }
-  async sendServiceCompletionOTP(req, res) {
-    console.log('📱 [BOOKING-API] Sending service completion OTP');
-    
-    try {
-      const { bookingId } = req.params;
-      const professionalId = req.user._id;
+ async sendServiceCompletionOTP(req, res) {
+  console.log('📱 [BOOKING-API] Sending service completion OTP');
+  
+  try {
+    const { bookingId } = req.params;
+    const professionalId = req.user._id;
 
-      console.log('📋 [BOOKING-API] Booking ID:', bookingId);
-      console.log('👨‍🔧 [BOOKING-API] Professional ID:', professionalId);
+    // Find booking - must be in_progress
+    const booking = await Booking.findOne({
+      _id: bookingId,
+      professional: professionalId,
+      status: 'in_progress' // ✅ NOT completed
+    }).populate('user', 'name phone email');
 
-      // Validate booking ID
-      if (!mongoose.Types.ObjectId.isValid(bookingId)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid booking ID format'
-        });
-      }
-
-      // Find and validate booking
-      const booking = await Booking.findOne({
-        _id: bookingId,
-        professional: professionalId,
-        status: 'in_progress'
-      }).populate('user', 'name phone email');
-
-      if (!booking) {
-        console.log('❌ [BOOKING-API] Booking not found or not in progress');
-        return res.status(404).json({
-          success: false,
-          message: 'Booking not found or not in progress'
-        });
-      }
-
-      console.log('✅ [BOOKING-API] Booking found:', {
-        id: booking._id,
-        status: booking.status,
-        customer: booking.user?.name
-      });
-
-      // Check if user has phone number
-      if (!booking.user?.phone) {
-        console.log('❌ [BOOKING-API] Customer phone number not found');
-        return res.status(400).json({
-          success: false,
-          message: 'Customer phone number not found'
-        });
-      }
-
-      // Send OTP to customer's phone using Twilio service
-      const customerPhone = booking.user.phone;
-      console.log('📞 [BOOKING-API] Sending OTP to:', customerPhone.replace(/(\d{2})\d{6}(\d{2})/, '$1******$2'));
-      
-      const otpResult = await twilioService.sendOtp(customerPhone);
-
-      // Store session ID in booking for verification
-      booking.completionOTPSession = otpResult.sessionId;
-      booking.completionOTPSentAt = new Date();
-      booking.completionOTPAttempts = 0; // Reset attempts
-      await booking.save();
-
-      console.log('✅ [BOOKING-API] OTP sent successfully');
-
-      res.status(200).json({
-        success: true,
-        message: 'OTP sent to customer successfully',
-        data: {
-          sessionId: otpResult.sessionId,
-          customerPhone: customerPhone.replace(/(\d{2})\d{6}(\d{2})/, '$1******$2'),
-          expiresIn: 600 // 10 minutes in seconds
-        }
-      });
-
-    } catch (error) {
-      console.error('❌ [BOOKING-API] Error sending service completion OTP:', error);
-      res.status(500).json({
+    if (!booking) {
+      return res.status(404).json({
         success: false,
-        message: 'Failed to send OTP',
-        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        message: 'Booking not found or not in progress'
       });
     }
+
+    if (!booking.user?.phone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Customer phone number not found'
+      });
+    }
+
+    // Send OTP to customer
+    const otpResult = await twilioService.sendOtp(booking.user.phone);
+
+    // ❌ DO NOT mark as completed here
+    // ✅ Only store OTP session for verification
+    booking.completionOTPSession = otpResult.sessionId;
+    booking.completionOTPSentAt = new Date();
+    booking.completionOTPAttempts = 0;
+    await booking.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'OTP sent to customer successfully',
+      data: {
+        sessionId: otpResult.sessionId,
+        customerPhone: booking.user.phone.replace(/(\d{2})\d{6}(\d{2})/, '$1******$2'),
+        expiresIn: 600
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ [BOOKING-API] Error sending OTP:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to send OTP',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
+}
 
   /**
    * Verify OTP and mark service as completed
