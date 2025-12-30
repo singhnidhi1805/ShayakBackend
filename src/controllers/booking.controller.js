@@ -275,38 +275,40 @@ async acceptBooking(req, res) {
       }
       
       // Find professional
-      const professional = await Professional.findById(professionalObjectId).session(session);
-      
-      if (!professional) {
-        await session.abortTransaction();
-        console.error(`❌ [BOOKING-API] No professional found with ID: ${professionalObjectId}`);
-        return res.status(404).json({
-          success: false,
-          message: 'Professional not found'
-        });
-      }
-      
-      console.log(`👨‍🔧 [BOOKING-API] Professional found: ${professional.name}`);
-      console.log(`🔧 [BOOKING-API] Professional specializations: ${professional.specializations}`);
-      console.log(`📦 [BOOKING-API] Service category: ${booking.service.category}`);
-      
-      // Verify professional specialization
-      if (!professional.specializations.includes(booking.service.category)) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          success: false,
-          message: `Service category '${booking.service.category}' does not match professional specializations: ${professional.specializations.join(', ')}`
-        });
-      }
-      
-      // Check professional availability
-      if (!professional.isAvailable) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          success: false,
-          message: 'Professional is not currently available'
-        });
-      }
+     const professional = await Professional.findById(professionalObjectId)
+  .select('name phone rating specializations isAvailable currentLocation currentBooking')
+  .session(session);
+
+if (!professional) {
+  await session.abortTransaction();
+  console.error(`❌ [BOOKING-API] No professional found with ID: ${professionalObjectId}`);
+  return res.status(404).json({
+    success: false,
+    message: 'Professional not found'
+  });
+}
+
+console.log(`👨‍🔧 [BOOKING-API] Professional found: ${professional.name}`);
+console.log(`🔧 [BOOKING-API] Professional specializations: ${professional.specializations}`);
+console.log(`📦 [BOOKING-API] Service category: ${booking.service.category}`);
+
+// Verify professional specialization
+if (!professional.specializations.includes(booking.service.category)) {
+  await session.abortTransaction();
+  return res.status(400).json({
+    success: false,
+    message: `Service category '${booking.service.category}' does not match professional specializations: ${professional.specializations.join(', ')}`
+  });
+}
+
+// Check professional availability
+if (!professional.isAvailable) {
+  await session.abortTransaction();
+  return res.status(400).json({
+    success: false,
+    message: 'Professional is not currently available'
+  });
+}
       
       console.log('📍 [BOOKING-API] Calculating initial ETA...');
       
@@ -372,6 +374,23 @@ async acceptBooking(req, res) {
       console.log('💾 [BOOKING-API] Saving booking...');
       await booking.save({ session });
       console.log('✅ [BOOKING-API] Booking saved');
+
+      console.log('💾 [BOOKING-API] Updating professional availability...');
+await Professional.findByIdAndUpdate(
+  professionalObjectId,
+  { 
+    isAvailable: false,
+    currentBooking: {
+      bookingId: bookingObjectId,
+      acceptedAt: new Date()
+    }
+  },
+  { 
+    session,
+    runValidators: false
+  }
+);
+console.log('✅ [BOOKING-API] Professional updated');
       
       // Update professional availability
       professional.isAvailable = false;
@@ -1444,11 +1463,10 @@ async verifyServiceCompletionOTP(req, res) {
     const booking = await Booking.findOne({
       _id: bookingId,
       professional: professionalId,
-      status: 'in_progress'
+      status: 'in_progress' // ✅ Must be in_progress
     }).populate('user', 'name phone email').populate('service', 'name category pricing');
 
     if (!booking) {
-      console.log('❌ [BOOKING-API] Booking not found or not in progress');
       return res.status(404).json({
         success: false,
         message: 'Booking not found or not in progress'
@@ -1486,16 +1504,12 @@ async verifyServiceCompletionOTP(req, res) {
     }
 
     // Verify OTP using Twilio Verify API
-    console.log('🔐 [BOOKING-API] Verifying OTP with Twilio...');
     const isValid = await twilioService.verifyOtp(booking.user.phone, otp);
 
     if (!isValid) {
-      // Increment attempt count
       booking.completionOTPAttempts = (booking.completionOTPAttempts || 0) + 1;
       await booking.save();
 
-      console.log('❌ [BOOKING-API] Invalid OTP. Attempts:', booking.completionOTPAttempts);
-      
       return res.status(400).json({
         success: false,
         message: 'Invalid OTP. Please try again.',
@@ -1505,28 +1519,26 @@ async verifyServiceCompletionOTP(req, res) {
 
     console.log('✅ [BOOKING-API] OTP verified successfully');
 
-    // AUTOMATICALLY STOP TRACKING
+    // ✅ CRITICAL: NOW mark service as completed
+    booking.status = 'completed';
+    booking.completedAt = new Date();
+    booking.completionOTPVerifiedAt = new Date();
+    
+    // Stop tracking automatically
     if (booking.tracking) {
       booking.tracking.isActive = false;
       booking.tracking.liveTrackingEnabled = false;
       booking.tracking.trackingEnded = new Date();
       
-      // Calculate total service time
       if (booking.tracking.startedAt) {
         const serviceTime = (new Date() - new Date(booking.tracking.startedAt)) / 1000 / 60;
         booking.tracking.totalServiceTime = Math.round(serviceTime);
       }
-      
-      console.log('🛑 [BOOKING-API] Tracking stopped automatically');
     }
-
-    // Mark service as completed
-    booking.status = 'completed';
-    booking.completedAt = new Date();
-    booking.completionOTPVerifiedAt = new Date();
+    
     await booking.save();
 
-    // ✅ FIXED: Calculate payment breakdown inline
+    // Calculate payment breakdown
     const serviceAmount = booking.totalAmount || booking.service?.pricing?.basePrice || 0;
     const additionalCharges = booking.additionalCharges || [];
     
@@ -1549,12 +1561,9 @@ async verifyServiceCompletionOTP(req, res) {
       additionalCharges
     };
 
-    console.log('✅ [BOOKING-API] Service completed successfully');
-    console.log('💰 [BOOKING-API] Payment breakdown:', paymentBreakdown);
-
     res.status(200).json({
       success: true,
-      message: 'Service completed successfully and tracking stopped',
+      message: 'Service completed successfully',
       data: {
         booking: {
           _id: booking._id,
@@ -1563,7 +1572,6 @@ async verifyServiceCompletionOTP(req, res) {
           tracking: {
             isActive: false,
             trackingEnded: booking.tracking?.trackingEnded,
-            totalTravelTime: booking.tracking?.totalTravelTime,
             totalServiceTime: booking.tracking?.totalServiceTime
           }
         },
@@ -1572,7 +1580,7 @@ async verifyServiceCompletionOTP(req, res) {
     });
 
   } catch (error) {
-    console.error('❌ [BOOKING-API] Error verifying service completion OTP:', error);
+    console.error('❌ [BOOKING-API] Error verifying OTP:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to verify OTP',
