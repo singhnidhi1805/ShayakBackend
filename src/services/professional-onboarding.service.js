@@ -125,6 +125,15 @@ class ProfessionalOnboardingService {
       throw createError(404, 'Professional not found');
     }
 
+    // FIX: Block re-upload of already-approved documents
+    // If a document of this type is already approved, do not allow overwrite
+    const existingApproved = professional.documents.find(
+      doc => doc.type === documentType && doc.status === 'approved'
+    );
+    if (existingApproved) {
+      throw createError(409, `Your ${documentType.replace(/_/g, ' ')} has already been approved and cannot be re-uploaded. Contact support if you need to update it.`);
+    }
+
     // Handle S3 operations
     let s3Key;
     const existingDoc = professional.documents.find(doc => doc.type === documentType);

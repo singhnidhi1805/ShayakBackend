@@ -172,9 +172,12 @@ class ProfessionalOnboardingController {
     } catch (error) {
       console.error('❌ [ONBOARD] Error uploading document:', error);
       logger.error('Upload document error:', error);
-      res.status(error.status || 500).json({
+      // FIX: 409 = document already approved — return clear message to app
+      const statusCode = error.status || (error.message?.includes('already been approved') ? 409 : 500);
+      res.status(statusCode).json({
         success: false,
         error: error.message || 'Failed to upload document',
+        alreadyApproved: statusCode === 409,
         details: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
       });
     }
